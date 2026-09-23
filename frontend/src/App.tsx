@@ -4,11 +4,12 @@ import {
   getOrders,
   getRoutes,
   planRoutes,
-  type DeliveryStatus,
   type OrderResponse,
   type OrderStatus,
   type RouteResponse,
 } from './api'
+import { deliveryLabels, numberFormat } from './format'
+import RouteMap from './RouteMap'
 
 const orderLabels: Record<OrderStatus, string> = {
   New: 'Nouă',
@@ -17,17 +18,6 @@ const orderLabels: Record<OrderStatus, string> = {
   Delivered: 'Livrată',
   Cancelled: 'Anulată',
 }
-
-const deliveryLabels: Record<DeliveryStatus, string> = {
-  Pending: 'În așteptare',
-  Departed: 'În drum',
-  Arrived: 'La destinație',
-  Delivered: 'Livrată',
-  Refused: 'Refuzată',
-  PartialReturn: 'Retur parțial',
-}
-
-const numberFormat = new Intl.NumberFormat('ro-RO', { maximumFractionDigits: 2 })
 
 function todayLocal(): string {
   const now = new Date()
@@ -55,6 +45,7 @@ function App() {
   const [day, setDay] = useState(todayLocal)
   const [orders, setOrders] = useState<OrderResponse[]>([])
   const [routes, setRoutes] = useState<RouteResponse[]>([])
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [planning, setPlanning] = useState(false)
   const [reload, setReload] = useState(0)
@@ -111,12 +102,17 @@ function App() {
   function handleDayChange(value: string) {
     if (!value) return
     setDay(value)
+    setLoading(true)
+    setOrders([])
+    setRoutes([])
+    setSelectedRouteId(null)
     setActionError(null)
     setNotice(null)
   }
 
   const confirmedCount = orders.filter(order => order.status === 'Confirmed').length
   const stopCount = routes.reduce((sum, route) => sum + route.stops.length, 0)
+  const selectedRoute = routes.find(route => route.id === selectedRouteId) ?? routes[0]
 
   return (
     <div className="app-shell">
@@ -185,8 +181,8 @@ function App() {
             {loading ? <p className="state-message" role="status">Se încarcă rutele…</p>
               : loadError ? <p className="state-message">Rutele nu sunt disponibile.</p>
               : routes.length === 0 ? <div className="empty-routes"><div className="empty-icon" aria-hidden="true">⌁</div><strong>Nu există rute planificate</strong><p>Rutele pentru această zi vor apărea aici după planificare.</p></div>
-              : <div className="route-list">{routes.map((route, index) => <article className="route-card" key={route.id}>
-                <div className="route-header"><div><span className="route-index">RUTA {String(index + 1).padStart(2, '0')}</span><h3>{route.stops[0]?.zone || 'Rută'}</h3></div><span className="stop-count">{route.stops.length} {route.stops.length === 1 ? 'oprire' : 'opriri'}</span></div>
+              : <div className="route-list">{routes.map((route, index) => <article className={`route-card${selectedRoute?.id === route.id ? ' is-selected' : ''}`} key={route.id}>
+                <div className="route-header"><div><span className="route-index">RUTA {String(index + 1).padStart(2, '0')}</span><h3>{route.stops[0]?.zone || 'Rută'}</h3></div><div className="route-header-actions"><span className="stop-count">{route.stops.length} {route.stops.length === 1 ? 'oprire' : 'opriri'}</span><button type="button" className="route-select-button" aria-pressed={selectedRoute?.id === route.id} onClick={() => setSelectedRouteId(route.id)}>{selectedRoute?.id === route.id ? 'Pe hartă' : 'Vezi pe hartă'}</button></div></div>
                 <div className="route-facts"><div><span>VEHICUL</span><strong>{route.vehicle.registrationNumber}</strong></div><div><span>ȘOFER</span><strong>{route.driver.fullName}</strong></div><div><span>VOLUM TOTAL</span><strong>{numberFormat.format(route.totalVolume)}</strong></div></div>
                 <div className="stops"><p>OPRIRI ÎN ORDINE</p><ol>{[...route.stops].sort((a, b) => a.sequence - b.sequence).map(stop => <li key={stop.id}>
                   <span className="sequence">{String(stop.sequence).padStart(2, '0')}</span>
@@ -195,6 +191,14 @@ function App() {
               </article>)}</div>}
           </section>
         </div>
+
+        <section className="panel map-panel" aria-labelledby="map-title">
+          <div className="panel-heading"><div><p className="section-kicker">03 / HARTĂ</p><h2 id="map-title">Harta rutei {selectedRoute ? `· ${selectedRoute.stops[0]?.zone || 'selectate'}` : ''}</h2></div></div>
+          {loading ? <p className="state-message" role="status">Se încarcă harta…</p>
+            : loadError ? <p className="state-message">Harta nu este disponibilă până la încărcarea rutelor.</p>
+            : !selectedRoute ? <p className="state-message">Nu există rute pentru această zi. Selectează altă zi sau planifică rutele pentru a vedea opririle pe hartă.</p>
+            : <RouteMap route={selectedRoute} />}
+        </section>
       </main>
     </div>
   )
