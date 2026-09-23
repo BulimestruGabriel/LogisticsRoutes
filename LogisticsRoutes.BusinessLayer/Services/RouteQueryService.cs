@@ -50,7 +50,8 @@ public class RouteQueryService(LogisticsDbContext db)
         return new RouteResponse(
             route.Id,
             route.Date,
-            new RouteVehicleResponse(route.VehicleId, route.Vehicle!.RegistrationNumber),
+            new RouteVehicleResponse(route.VehicleId, route.Vehicle!.RegistrationNumber,
+                route.Vehicle.Capacity),
             new RouteDriverResponse(route.DriverId, route.Driver!.FullName),
             stops.Sum(stop => stop.Volume),
             stops);

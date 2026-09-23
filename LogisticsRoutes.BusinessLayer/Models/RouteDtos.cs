@@ -1,6 +1,6 @@
 namespace LogisticsRoutes.BusinessLayer.Models;
 
-public record RouteVehicleResponse(Guid Id, string RegistrationNumber);
+public record RouteVehicleResponse(Guid Id, string RegistrationNumber, decimal Capacity);
 
 public record RouteDriverResponse(Guid Id, string FullName);
 

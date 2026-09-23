@@ -136,3 +136,9 @@ h3{margin:5px 0 0;font-size:17px;letter-spacing:-.025em}
 .resource-load-error button{border:0;background:none;color:inherit;font-weight:800;text-decoration:underline}
 @media(max-width:950px){.resource-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.resource-form{padding:18px 17px}.resource-fields{grid-template-columns:1fr}.resource-form .primary-button{width:100%;margin-left:0}.resource-load-error{margin:15px 17px}}
+.add-to-route-controls{display:flex;flex-direction:column;align-items:flex-start;gap:7px;margin-top:8px}
+.add-to-route-controls select{max-width:220px;width:100%;padding:7px 8px;border:1px solid #d8dfdb;border-radius:7px;background:#fff;color:#26342f;font-size:11px}
+.add-to-route-controls select:focus{border-color:#779e2e;outline:2px solid #b3d95d55}
+.add-to-route-controls .confirm-button{margin-top:0}
+.add-to-route-controls select:disabled{opacity:.55}
+.route-unavailable{display:block;max-width:210px;margin-top:7px;color:#87938d;font-size:11px;line-height:1.4}

@@ -59,7 +59,7 @@ export interface RouteStopResponse {
 export interface RouteResponse {
   id: string
   date: string
-  vehicle: { id: string; registrationNumber: string }
+  vehicle: { id: string; registrationNumber: string; capacity: number }
   driver: { id: string; fullName: string }
   totalVolume: number
   stops: RouteStopResponse[]
@@ -156,6 +156,14 @@ export function confirmOrder(id: string): Promise<OrderResponse> {
 
 export function getRoutes(day: string, signal?: AbortSignal): Promise<RouteResponse[]> {
   return request(`/api/routes?day=${encodeURIComponent(day)}`, { signal })
+}
+
+export function addOrderToRoute(routeId: string, orderId: string): Promise<RouteResponse> {
+  return request(`/api/routes/${encodeURIComponent(routeId)}/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderId }),
+  })
 }
 
 export function planRoutes(day: string): Promise<PlanRoutesResponse> {

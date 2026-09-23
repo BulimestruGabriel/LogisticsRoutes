@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ApiError,
+  addOrderToRoute,
   confirmOrder,
   createOrder,
   getOrders,
@@ -83,6 +84,33 @@ function confirmErrorMessage(error: unknown): string {
   return 'Conexiunea cu API-ul a eșuat. Verifică dacă API-ul rulează și încearcă din nou.'
 }
 
+function addToRouteErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 409) return `${error.message} Listele se reîncarcă.`
+    if (error.status === 404) return 'Ruta sau comanda nu mai există. Listele se reîncarcă.'
+    if (error.status === 400) return 'Cererea este invalidă. Verifică ruta și comanda selectate.'
+  }
+  return errorMessage(error)
+}
+
+function compatibleRoutes(order: OrderResponse, routes: RouteResponse[]): RouteResponse[] {
+  return routes.filter(route => route.date === order.deliveryDate && route.stops.length > 0 &&
+    route.stops.every(stop => stop.deliveryStatus === 'Pending' &&
+      stop.zone.toLocaleLowerCase('ro-RO') === order.zone.toLocaleLowerCase('ro-RO')) &&
+    route.totalVolume + order.volume <= route.vehicle.capacity)
+}
+
+function unavailableRouteReason(order: OrderResponse, routes: RouteResponse[]): string {
+  const sameDay = routes.filter(route => route.date === order.deliveryDate)
+  if (sameDay.length === 0) return 'Nu există rute pentru ziua comenzii.'
+  const sameZone = sameDay.filter(route => route.stops.length > 0 && route.stops.every(stop =>
+    stop.zone.toLocaleLowerCase('ro-RO') === order.zone.toLocaleLowerCase('ro-RO')))
+  if (sameZone.length === 0) return 'Nu există rută în zona comenzii.'
+  const pending = sameZone.filter(route => route.stops.every(stop => stop.deliveryStatus === 'Pending'))
+  if (pending.length === 0) return 'Opririle rutelor din această zonă au început deja.'
+  return 'Capacitatea vehiculelor din această zonă este insuficientă.'
+}
+
 function App() {
   const [day, setDay] = useState(todayLocal)
   const [orders, setOrders] = useState<OrderResponse[]>([])
@@ -92,6 +120,8 @@ function App() {
   const [planning, setPlanning] = useState(false)
   const [creatingOrder, setCreatingOrder] = useState(false)
   const [confirmingOrderId, setConfirmingOrderId] = useState<string | null>(null)
+  const [addingOrderId, setAddingOrderId] = useState<string | null>(null)
+  const [routeForOrder, setRouteForOrder] = useState<Record<string, string>>({})
   const [updatingStop, setUpdatingStop] = useState<{ stopId: string; status: DeliveryStatus } | null>(null)
   const mutationInFlight = useRef(false)
   const [reload, setReload] = useState(0)
@@ -99,6 +129,7 @@ function App() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [routeOrderError, setRouteOrderError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
@@ -226,6 +257,30 @@ function App() {
     }
   }
 
+  async function handleAddToRoute(orderId: string, routeId: string) {
+    if (mutationInFlight.current || !routeId) return
+    mutationInFlight.current = true
+    setAddingOrderId(orderId)
+    setRouteOrderError(null)
+    setNotice(null)
+    try {
+      await addOrderToRoute(routeId, orderId)
+      setSelectedRouteId(current => current ?? selectedRoute?.id ?? routeId)
+      setNotice('Comanda a fost adăugată. Ordinea opririlor a fost recalculată.')
+      setLoading(true)
+      setReload(value => value + 1)
+    } catch (error) {
+      setRouteOrderError(addToRouteErrorMessage(error))
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+        setLoading(true)
+        setReload(value => value + 1)
+      }
+    } finally {
+      setAddingOrderId(null)
+      mutationInFlight.current = false
+    }
+  }
+
   function handleDayChange(value: string) {
     if (!value) return
     setDay(value)
@@ -236,13 +291,16 @@ function App() {
     setActionError(null)
     setStatusError(null)
     setConfirmError(null)
+    setRouteOrderError(null)
+    setRouteForOrder({})
     setNotice(null)
   }
 
   const confirmedCount = orders.filter(order => order.status === 'Confirmed').length
   const stopCount = routes.reduce((sum, route) => sum + route.stops.length, 0)
   const selectedRoute = routes.find(route => route.id === selectedRouteId) ?? routes[0]
-  const busy = planning || creatingOrder || confirmingOrderId !== null || updatingStop !== null
+  const busy = planning || creatingOrder || confirmingOrderId !== null ||
+    updatingStop !== null || addingOrderId !== null
 
   return (
     <div className="app-shell">
@@ -301,12 +359,17 @@ function App() {
           <section className="panel orders-panel" aria-labelledby="orders-title">
             <div className="panel-heading"><div><p className="section-kicker">01 / COMENZI</p><h2 id="orders-title">Comenzile zilei</h2></div><span className="count-pill">{loading ? '…' : orders.length}</span></div>
             {confirmError && <div className="status-error" role="alert">{confirmError}</div>}
+            {routeOrderError && <div className="status-error" role="alert">{routeOrderError}</div>}
             {loading ? <p className="state-message" role="status">Se încarcă comenzile…</p>
               : loadError ? <p className="state-message">Comenzile nu sunt disponibile.</p>
               : orders.length === 0 ? <p className="state-message">Nu există comenzi pentru ziua selectată.</p>
               : <div className="table-scroll"><table>
                 <thead><tr><th>Adresă / zonă</th><th>Volum</th><th>Status</th></tr></thead>
-                <tbody>{orders.map(order => <tr key={order.id}>
+                <tbody>{orders.map(order => {
+                  const availableRoutes = order.status === 'Confirmed' ? compatibleRoutes(order, routes) : []
+                  const chosenRouteId = availableRoutes.some(route => route.id === routeForOrder[order.id])
+                    ? routeForOrder[order.id] : availableRoutes[0]?.id ?? ''
+                  return <tr key={order.id}>
                   <td><strong>{order.address}</strong><span className="secondary-line">{order.zone}</span></td>
                   <td className="number-cell">{numberFormat.format(order.volume)}</td>
                   <td className="order-status-cell"><span className={`status status-${order.status.toLowerCase()}`}>{orderLabels[order.status] ?? order.status}</span>
@@ -315,8 +378,23 @@ function App() {
                       aria-label={`Confirmă comanda ${order.address}`}>
                       {confirmingOrderId === order.id ? 'Se confirmă…' : 'Confirmă'}
                     </button>}
+                    {order.status === 'Confirmed' && (availableRoutes.length > 0
+                      ? <div className="add-to-route-controls">
+                        <select aria-label={`Rută pentru comanda ${order.address}`} value={chosenRouteId}
+                          onChange={event => { setRouteForOrder(current => ({ ...current, [order.id]: event.target.value })); setRouteOrderError(null) }}
+                          disabled={busy || loading}>
+                          {availableRoutes.map(route => <option value={route.id} key={route.id}>
+                            Ruta {routes.indexOf(route) + 1} · {route.vehicle.registrationNumber} · liber {numberFormat.format(route.vehicle.capacity - route.totalVolume)}
+                          </option>)}
+                        </select>
+                        <button type="button" className="confirm-button" onClick={() => handleAddToRoute(order.id, chosenRouteId)}
+                          disabled={busy || loading}>
+                          {addingOrderId === order.id ? 'Se adaugă…' : 'Adaugă la rută'}
+                        </button>
+                      </div>
+                      : <span className="route-unavailable">{unavailableRouteReason(order, routes)}</span>)}
                   </td>
-                </tr>)}</tbody>
+                </tr>})}</tbody>
               </table></div>}
           </section>
 
