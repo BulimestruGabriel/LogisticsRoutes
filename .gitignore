@@ -1,0 +1,54 @@
+# Rider / IDE
+.idea/
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+_ReSharper*/
+*_ReSharper.Caches/
+
+# .NET build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+artifacts/
+TestResults/
+*.nupkg
+
+# Frontend build output and dependencies
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.npm/
+.yarn/cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.Local.json
+*.pfx
+*.p12
+
+# Logs and operating system files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
