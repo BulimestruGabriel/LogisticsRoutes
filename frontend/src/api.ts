@@ -52,6 +52,16 @@ export interface PlanRoutesResponse {
   }>
 }
 
+export interface UpdateRouteStopStatusRequest {
+  status: DeliveryStatus
+}
+
+export interface UpdateRouteStopStatusResponse {
+  stopId: string
+  deliveryStatus: DeliveryStatus
+  orderStatus: OrderStatus
+}
+
 interface ProblemDetails {
   detail?: string
   title?: string
@@ -87,6 +97,16 @@ export function planRoutes(day: string): Promise<PlanRoutesResponse> {
   const body: PlanRoutesRequest = { day }
   return request('/api/routes/plan', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export function updateRouteStopStatus(routeId: string, stopId: string,
+  status: DeliveryStatus): Promise<UpdateRouteStopStatusResponse> {
+  const body: UpdateRouteStopStatusRequest = { status }
+  return request(`/api/routes/${encodeURIComponent(routeId)}/stops/${encodeURIComponent(stopId)}/status`, {
+    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })

@@ -99,3 +99,9 @@ h3{margin:5px 0 0;font-size:17px;letter-spacing:-.025em}
 .map-warning{margin:20px 24px 0;padding:12px 14px;border:1px solid #efd6ac;border-radius:8px;background:#fff8e9;color:#775825;font-size:12px;line-height:1.55}
 .map-unavailable{margin:24px;color:#7c8982;font-size:14px}
 @media(max-width:600px){.route-header{align-items:flex-start;gap:8px}.route-header-actions{flex-direction:column;align-items:flex-end;gap:6px}.map-frame{margin:15px 15px 0}.route-map{height:320px}.map-warning{margin:15px 15px 0}.map-legend{align-items:flex-start;margin:12px 15px 18px}.legend-line{margin-top:7px}}
+.stop-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.stop-actions button{padding:6px 9px;border:1px solid #c9d9b8;border-radius:6px;background:#f3f8ec;color:#4b6c32;font-size:11px;font-weight:750;line-height:1.25}
+.stop-actions button:hover:not(:disabled),.stop-actions button:focus-visible{border-color:#648e44;background:#e9f3dc;outline:none}
+.stop-actions button:disabled,.route-select-button:disabled{cursor:not-allowed;opacity:.55}
+.stop-final{color:#84918a;font-size:11px;font-weight:650}
+.status-error{margin:15px 18px 0;padding:11px 13px;border:1px solid #efc8bf;border-radius:8px;background:#fff1ed;color:#8d3526;font-size:12px;line-height:1.5}

@@ -4,6 +4,8 @@ import {
   getOrders,
   getRoutes,
   planRoutes,
+  updateRouteStopStatus,
+  type DeliveryStatus,
   type OrderResponse,
   type OrderStatus,
   type RouteResponse,
@@ -17,6 +19,23 @@ const orderLabels: Record<OrderStatus, string> = {
   Planned: 'Planificată',
   Delivered: 'Livrată',
   Cancelled: 'Anulată',
+}
+
+const nextStopStatuses: Record<DeliveryStatus, DeliveryStatus[]> = {
+  Pending: ['Departed'],
+  Departed: ['Arrived'],
+  Arrived: ['Delivered', 'Refused', 'PartialReturn'],
+  Delivered: [],
+  Refused: [],
+  PartialReturn: [],
+}
+
+const stopActionLabels: Partial<Record<DeliveryStatus, string>> = {
+  Departed: 'Marchează în drum',
+  Arrived: 'Marchează la destinație',
+  Delivered: 'Marchează livrată',
+  Refused: 'Marchează refuzată',
+  PartialReturn: 'Marchează retur parțial',
 }
 
 function todayLocal(): string {
@@ -41,6 +60,15 @@ function errorMessage(error: unknown): string {
   return 'Conexiunea cu API-ul a eșuat. Verifică dacă API-ul rulează și încearcă din nou.'
 }
 
+function stopStatusErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 409) return `Tranziția a fost respinsă (409): ${error.message}`
+    if (error.status === 404) return 'Ruta sau oprirea nu mai există (404). Reîncarcă datele.'
+    if (error.status === 400) return `Status invalid (400): ${error.message}`
+  }
+  return errorMessage(error)
+}
+
 function App() {
   const [day, setDay] = useState(todayLocal)
   const [orders, setOrders] = useState<OrderResponse[]>([])
@@ -48,9 +76,11 @@ function App() {
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [planning, setPlanning] = useState(false)
+  const [updatingStop, setUpdatingStop] = useState<{ stopId: string; status: DeliveryStatus } | null>(null)
   const [reload, setReload] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
@@ -99,6 +129,29 @@ function App() {
     }
   }
 
+  async function handleStopStatus(routeId: string, stopId: string, status: DeliveryStatus) {
+    if (updatingStop) return
+    setUpdatingStop({ stopId, status })
+    setStatusError(null)
+    setActionError(null)
+    setNotice(null)
+    try {
+      await updateRouteStopStatus(routeId, stopId, status)
+      setSelectedRouteId(routeId)
+      setNotice('Starea opririi a fost actualizată. Se reîncarcă rutele și comenzile.')
+      setLoading(true)
+      setReload(value => value + 1)
+    } catch (error) {
+      setStatusError(stopStatusErrorMessage(error))
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+        setLoading(true)
+        setReload(value => value + 1)
+      }
+    } finally {
+      setUpdatingStop(null)
+    }
+  }
+
   function handleDayChange(value: string) {
     if (!value) return
     setDay(value)
@@ -107,6 +160,7 @@ function App() {
     setRoutes([])
     setSelectedRouteId(null)
     setActionError(null)
+    setStatusError(null)
     setNotice(null)
   }
 
@@ -135,14 +189,14 @@ function App() {
           <label className="date-field" htmlFor="delivery-day">
             <span>ZIUA LIVRĂRII</span>
             <input id="delivery-day" type="date" value={day}
-              onChange={event => handleDayChange(event.target.value)} disabled={planning} />
+              onChange={event => handleDayChange(event.target.value)} disabled={planning || updatingStop !== null} />
           </label>
           <div className="toolbar-meta">
             <span className="toolbar-date">{readableDay(day)}</span>
             <span className="toolbar-note">Comenzi și rute în această zi</span>
           </div>
           <button className="primary-button" type="button" onClick={handlePlan}
-            disabled={loading || planning || !!loadError}>
+            disabled={loading || planning || updatingStop !== null || !!loadError}>
             <span aria-hidden="true">✦</span> {planning ? 'Se planifică…' : 'Planifică rutele'}
           </button>
         </section>
@@ -178,15 +232,27 @@ function App() {
 
           <section className="panel routes-panel" aria-labelledby="routes-title">
             <div className="panel-heading"><div><p className="section-kicker">02 / RUTE</p><h2 id="routes-title">Rutele zilei</h2></div><span className="count-pill">{loading ? '…' : routes.length}</span></div>
+            {statusError && <div className="status-error" role="alert">{statusError}</div>}
             {loading ? <p className="state-message" role="status">Se încarcă rutele…</p>
               : loadError ? <p className="state-message">Rutele nu sunt disponibile.</p>
               : routes.length === 0 ? <div className="empty-routes"><div className="empty-icon" aria-hidden="true">⌁</div><strong>Nu există rute planificate</strong><p>Rutele pentru această zi vor apărea aici după planificare.</p></div>
               : <div className="route-list">{routes.map((route, index) => <article className={`route-card${selectedRoute?.id === route.id ? ' is-selected' : ''}`} key={route.id}>
-                <div className="route-header"><div><span className="route-index">RUTA {String(index + 1).padStart(2, '0')}</span><h3>{route.stops[0]?.zone || 'Rută'}</h3></div><div className="route-header-actions"><span className="stop-count">{route.stops.length} {route.stops.length === 1 ? 'oprire' : 'opriri'}</span><button type="button" className="route-select-button" aria-pressed={selectedRoute?.id === route.id} onClick={() => setSelectedRouteId(route.id)}>{selectedRoute?.id === route.id ? 'Pe hartă' : 'Vezi pe hartă'}</button></div></div>
+                <div className="route-header"><div><span className="route-index">RUTA {String(index + 1).padStart(2, '0')}</span><h3>{route.stops[0]?.zone || 'Rută'}</h3></div><div className="route-header-actions"><span className="stop-count">{route.stops.length} {route.stops.length === 1 ? 'oprire' : 'opriri'}</span><button type="button" className="route-select-button" aria-pressed={selectedRoute?.id === route.id} onClick={() => { setSelectedRouteId(route.id); setStatusError(null) }} disabled={updatingStop !== null}>{selectedRoute?.id === route.id ? 'Pe hartă' : 'Vezi pe hartă'}</button></div></div>
                 <div className="route-facts"><div><span>VEHICUL</span><strong>{route.vehicle.registrationNumber}</strong></div><div><span>ȘOFER</span><strong>{route.driver.fullName}</strong></div><div><span>VOLUM TOTAL</span><strong>{numberFormat.format(route.totalVolume)}</strong></div></div>
                 <div className="stops"><p>OPRIRI ÎN ORDINE</p><ol>{[...route.stops].sort((a, b) => a.sequence - b.sequence).map(stop => <li key={stop.id}>
                   <span className="sequence">{String(stop.sequence).padStart(2, '0')}</span>
-                  <span className="stop-detail"><strong>{stop.address}</strong><small>{stop.zone} · {numberFormat.format(stop.volume)} · {deliveryLabels[stop.deliveryStatus] ?? stop.deliveryStatus}</small></span>
+                  <span className="stop-detail"><strong>{stop.address}</strong><small>{stop.zone} · {numberFormat.format(stop.volume)} · {deliveryLabels[stop.deliveryStatus] ?? stop.deliveryStatus}</small>
+                    {selectedRoute?.id === route.id && <span className="stop-actions">
+                      {nextStopStatuses[stop.deliveryStatus]?.length
+                        ? nextStopStatuses[stop.deliveryStatus].map(nextStatus => <button key={nextStatus} type="button"
+                          onClick={() => handleStopStatus(route.id, stop.id, nextStatus)}
+                          disabled={updatingStop !== null || loading || planning}>
+                          {updatingStop?.stopId === stop.id && updatingStop.status === nextStatus
+                            ? 'Se salvează…' : stopActionLabels[nextStatus]}
+                        </button>)
+                        : <span className="stop-final">Stare finală</span>}
+                    </span>}
+                  </span>
                 </li>)}</ol></div>
               </article>)}</div>}
           </section>

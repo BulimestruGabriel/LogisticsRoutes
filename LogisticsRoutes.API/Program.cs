@@ -15,6 +15,7 @@ builder.Services.AddScoped<DriverService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<RoutePlanningService>();
 builder.Services.AddScoped<RouteQueryService>();
+builder.Services.AddScoped<RouteStopStatusService>();
 builder.Services.AddSingleton(new PlanningSettings(
     builder.Configuration.GetValue<double?>("Planning:DepotLatitude"),
     builder.Configuration.GetValue<double?>("Planning:DepotLongitude")));
@@ -41,6 +42,11 @@ app.Use(async (context, next) =>
             .ExecuteAsync(context);
     }
     catch (PlanningConflictException exception)
+    {
+        await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status409Conflict)
+            .ExecuteAsync(context);
+    }
+    catch (RouteStopStatusConflictException exception)
     {
         await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status409Conflict)
             .ExecuteAsync(context);
@@ -148,6 +154,22 @@ app.MapGet("/api/routes/{id}", async (Guid id, RouteQueryService service,
     .Produces<RouteResponse>()
     .Produces(StatusCodes.Status404NotFound)
     .ProducesProblem(StatusCodes.Status400BadRequest);
+
+app.MapPatch("/api/routes/{routeId}/stops/{stopId}/status", async (Guid routeId, Guid stopId,
+        UpdateRouteStopStatusRequest request, RouteStopStatusService service,
+        CancellationToken cancellationToken) =>
+    {
+        var result = await service.UpdateAsync(routeId, stopId, request, cancellationToken);
+        return result is null
+            ? Results.Problem(detail: "Ruta sau oprirea nu a fost găsită.",
+                statusCode: StatusCodes.Status404NotFound)
+            : Results.Ok(result);
+    })
+    .WithTags("Routes")
+    .Produces<UpdateRouteStopStatusResponse>()
+    .ProducesProblem(StatusCodes.Status400BadRequest)
+    .ProducesProblem(StatusCodes.Status404NotFound)
+    .ProducesProblem(StatusCodes.Status409Conflict);
 
 app.Run();
 

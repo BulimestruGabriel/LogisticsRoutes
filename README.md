@@ -38,3 +38,7 @@ Deschide adresa afișată de Vite (implicit `http://localhost:5173`). Cererile `
 Latitudinea trebuie să fie între −90 și 90, iar longitudinea între −180 și 180. Poți seta aceleași chei și în configurația locală ASP.NET Core, sub secțiunea `Planning`.
 
 Cererea conține ziua de planificare: `{"day":"YYYY-MM-DD"}`. Serviciul include doar comenzile `Confirmed` din acea zi, păstrează fiecare rută într-o singură zonă, respectă capacitatea vehiculului și atribuie un vehicul și un șofer distinct fiecărei rute. Opririle sunt ordonate prin nearest neighbor cu distanța Haversine de la depozit. Ora estimată a sosirii rămâne necompletată până când există date pentru o estimare reală. Dacă nu sunt comenzi confirmate, răspunsul conține `routes: []`; dacă planificarea nu poate fi completată sau există deja rute în acea zi, API-ul răspunde cu `409` fără să salveze o planificare parțială.
+
+## Starea unei opriri
+
+`PATCH /api/routes/{routeId}/stops/{stopId}/status` primește un corp JSON precum `{"status":"Departed"}`. Stările permise urmează `Pending → Departed → Arrived → Delivered / Refused / PartialReturn`; ultimele trei sunt finale în acest MVP. API-ul întoarce `400` pentru un nume de status necunoscut, `404` dacă ruta sau oprirea nu există ori oprirea nu aparține rutei, și `409` pentru o tranziție nepermisă. La `Delivered`, comanda asociată devine tot `Delivered`; la `Refused` sau `PartialReturn`, comanda rămâne `Planned` până la definirea unui flux ulterior.
