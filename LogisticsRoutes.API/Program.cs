@@ -14,6 +14,7 @@ builder.Services.AddScoped<VehicleService>();
 builder.Services.AddScoped<DriverService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<RoutePlanningService>();
+builder.Services.AddScoped<RouteQueryService>();
 builder.Services.AddSingleton(new PlanningSettings(
     builder.Configuration.GetValue<double?>("Planning:DepotLatitude"),
     builder.Configuration.GetValue<double?>("Planning:DepotLongitude")));
@@ -130,4 +131,24 @@ app.MapPost("/api/routes/plan", async (PlanRoutesRequest request, RoutePlanningS
     .ProducesProblem(StatusCodes.Status409Conflict)
     .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+app.MapGet("/api/routes", async (DateOnly day, RouteQueryService service,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await service.GetByDayAsync(day, cancellationToken)))
+    .WithTags("Routes")
+    .Produces<List<RouteResponse>>()
+    .ProducesProblem(StatusCodes.Status400BadRequest);
+
+app.MapGet("/api/routes/{id}", async (Guid id, RouteQueryService service,
+        CancellationToken cancellationToken) =>
+    {
+        var route = await service.GetByIdAsync(id, cancellationToken);
+        return route is null ? Results.NotFound() : Results.Ok(route);
+    })
+    .WithTags("Routes")
+    .Produces<RouteResponse>()
+    .Produces(StatusCodes.Status404NotFound)
+    .ProducesProblem(StatusCodes.Status400BadRequest);
+
 app.Run();
+
+public partial class Program;

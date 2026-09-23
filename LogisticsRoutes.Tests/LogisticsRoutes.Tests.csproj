@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.31" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.31" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -22,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LogisticsRoutes.BusinessLayer\LogisticsRoutes.BusinessLayer.csproj" />
+    <ProjectReference Include="..\LogisticsRoutes.API\LogisticsRoutes.API.csproj" />
   </ItemGroup>
 
 </Project>
