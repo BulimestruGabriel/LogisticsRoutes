@@ -8,6 +8,6 @@ public class RouteStop
     public Guid OrderId { get; set; }
     public Order? Order { get; set; }
     public int Sequence { get; set; }
-    public DateTimeOffset EstimatedArrival { get; set; }
+    public DateTimeOffset? EstimatedArrival { get; set; }
     public DeliveryStatus DeliveryStatus { get; set; } = DeliveryStatus.Pending;
 }

@@ -13,6 +13,10 @@ builder.Services.AddDbContext<LogisticsDbContext>(options => options.UseNpgsql(c
 builder.Services.AddScoped<VehicleService>();
 builder.Services.AddScoped<DriverService>();
 builder.Services.AddScoped<OrderService>();
+builder.Services.AddScoped<RoutePlanningService>();
+builder.Services.AddSingleton(new PlanningSettings(
+    builder.Configuration.GetValue<double?>("Planning:DepotLatitude"),
+    builder.Configuration.GetValue<double?>("Planning:DepotLongitude")));
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -33,6 +37,16 @@ app.Use(async (context, next) =>
     catch (BadHttpRequestException exception)
     {
         await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status400BadRequest)
+            .ExecuteAsync(context);
+    }
+    catch (PlanningConflictException exception)
+    {
+        await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status409Conflict)
+            .ExecuteAsync(context);
+    }
+    catch (PlanningConfigurationException exception)
+    {
+        await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status500InternalServerError)
             .ExecuteAsync(context);
     }
 });
@@ -106,5 +120,14 @@ app.MapPatch("/api/orders/{id}/confirm", async (Guid id, OrderService service,
     .Produces<OrderResponse>()
     .Produces(StatusCodes.Status404NotFound)
     .ProducesProblem(StatusCodes.Status400BadRequest);
+
+app.MapPost("/api/routes/plan", async (PlanRoutesRequest request, RoutePlanningService service,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await service.PlanAsync(request, cancellationToken)))
+    .WithTags("Routes")
+    .Produces<PlanRoutesResponse>()
+    .ProducesProblem(StatusCodes.Status400BadRequest)
+    .ProducesProblem(StatusCodes.Status409Conflict)
+    .ProducesProblem(StatusCodes.Status500InternalServerError);
 
 app.Run();
