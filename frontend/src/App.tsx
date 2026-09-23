@@ -15,6 +15,7 @@ import {
 } from './api'
 import { deliveryLabels, numberFormat } from './format'
 import NewOrderForm from './NewOrderForm'
+import ResourceManagement from './ResourceManagement'
 import RouteMap from './RouteMap'
 
 const orderLabels: Record<OrderStatus, string> = {
@@ -288,6 +289,8 @@ function App() {
           <div className="summary-card"><span>DE PLANIFICAT</span><strong>{loading ? '—' : confirmedCount}</strong><small>comenzi confirmate</small></div>
           <div className="summary-card"><span>RUTE</span><strong>{loading ? '—' : routes.length}</strong><small>{loading ? 'se încarcă' : `${stopCount} opriri în total`}</small></div>
         </div>
+
+        <ResourceManagement />
 
         <section className="panel new-order-panel" aria-labelledby="new-order-title">
           <div className="panel-heading"><div><p className="section-kicker">ADĂUGARE COMANDĂ</p><h2 id="new-order-title">Comandă nouă</h2></div></div>

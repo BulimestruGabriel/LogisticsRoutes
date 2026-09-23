@@ -23,6 +23,26 @@ export interface CreateOrderRequest {
   deliveryDate: string
 }
 
+export interface VehicleResponse {
+  id: string
+  registrationNumber: string
+  capacity: number
+}
+
+export interface CreateVehicleRequest {
+  registrationNumber: string
+  capacity: number
+}
+
+export interface DriverResponse {
+  id: string
+  fullName: string
+}
+
+export interface CreateDriverRequest {
+  fullName: string
+}
+
 export interface RouteStopResponse {
   id: string
   sequence: number
@@ -96,6 +116,30 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export function getOrders(day: string, signal?: AbortSignal): Promise<OrderResponse[]> {
   return request(`/api/orders?day=${encodeURIComponent(day)}`, { signal })
+}
+
+export function getVehicles(signal?: AbortSignal): Promise<VehicleResponse[]> {
+  return request('/api/vehicles', { signal })
+}
+
+export function createVehicle(body: CreateVehicleRequest): Promise<VehicleResponse> {
+  return request('/api/vehicles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export function getDrivers(signal?: AbortSignal): Promise<DriverResponse[]> {
+  return request('/api/drivers', { signal })
+}
+
+export function createDriver(body: CreateDriverRequest): Promise<DriverResponse> {
+  return request('/api/drivers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 export function createOrder(body: CreateOrderRequest): Promise<OrderResponse> {
