@@ -14,6 +14,15 @@ export interface OrderResponse {
   status: OrderStatus
 }
 
+export interface CreateOrderRequest {
+  zone: string
+  address: string
+  latitude: number
+  longitude: number
+  volume: number
+  deliveryDate: string
+}
+
 export interface RouteStopResponse {
   id: string
   sequence: number
@@ -87,6 +96,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export function getOrders(day: string, signal?: AbortSignal): Promise<OrderResponse[]> {
   return request(`/api/orders?day=${encodeURIComponent(day)}`, { signal })
+}
+
+export function createOrder(body: CreateOrderRequest): Promise<OrderResponse> {
+  return request('/api/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export function confirmOrder(id: string): Promise<OrderResponse> {
+  return request(`/api/orders/${encodeURIComponent(id)}/confirm`, { method: 'PATCH' })
 }
 
 export function getRoutes(day: string, signal?: AbortSignal): Promise<RouteResponse[]> {
