@@ -111,6 +111,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     if (!problem && response.status >= 500) throw new Error('API unavailable')
     throw new ApiError(response.status, problem?.detail || problem?.title || `HTTP ${response.status}`)
   }
+  if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 
@@ -167,6 +168,15 @@ export function saveRouteStopOrder(routeId: string, stopIds: string[]): Promise<
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stopIds }),
+  })
+}
+
+export function moveRouteStop(sourceRouteId: string, stopId: string,
+  destinationRouteId: string): Promise<void> {
+  return request(`/api/routes/${encodeURIComponent(sourceRouteId)}/stops/${encodeURIComponent(stopId)}/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destinationRouteId }),
   })
 }
 

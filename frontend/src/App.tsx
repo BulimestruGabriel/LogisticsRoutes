@@ -7,6 +7,7 @@ import {
   getOrders,
   getRoute,
   getRoutes,
+  moveRouteStop,
   planRoutes,
   saveRouteStopOrder,
   updateRouteStopStatus,
@@ -95,6 +96,15 @@ function addToRouteErrorMessage(error: unknown): string {
   return errorMessage(error)
 }
 
+function moveStopErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 409) return `Mutarea a fost respinsă: ${error.message}`
+    if (error.status === 404) return 'Ruta sau oprirea nu mai există în datele actuale.'
+    if (error.status === 400) return `Cererea de mutare este invalidă: ${error.message}`
+  }
+  return errorMessage(error)
+}
+
 function compatibleRoutes(order: OrderResponse, routes: RouteResponse[]): RouteResponse[] {
   return routes.filter(route => route.date === order.deliveryDate && route.stops.length > 0 &&
     route.stops.every(stop => stop.deliveryStatus === 'Pending' &&
@@ -135,6 +145,11 @@ function App() {
   const [stopOrderError, setStopOrderError] = useState<string | null>(null)
   const [draftOrder, setDraftOrder] = useState<{ routeId: string; stopIds: string[] } | null>(null)
   const [savingStopOrder, setSavingStopOrder] = useState(false)
+  const [moveDraft, setMoveDraft] = useState<{
+    sourceRouteId: string; stopId: string; destinationRouteId: string
+  } | null>(null)
+  const [movingStop, setMovingStop] = useState(false)
+  const [moveError, setMoveError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
@@ -329,6 +344,37 @@ function App() {
     }
   }
 
+  async function handleMoveStop() {
+    if (!moveDraft?.destinationRouteId || mutationInFlight.current) return
+    const { sourceRouteId, stopId, destinationRouteId } = moveDraft
+    mutationInFlight.current = true
+    setMovingStop(true)
+    setMoveError(null)
+    setNotice(null)
+    let moved = false
+    try {
+      await moveRouteStop(sourceRouteId, stopId, destinationRouteId)
+      moved = true
+      const [source, destination] = await Promise.all([
+        getRoute(sourceRouteId), getRoute(destinationRouteId),
+      ])
+      setRoutes(current => current.map(route =>
+        route.id === source.id ? source : route.id === destination.id ? destination : route))
+      setMoveDraft(null)
+      setNotice('Oprirea a fost mutată în ruta destinație.')
+    } catch (error) {
+      if (moved) {
+        setMoveDraft(null)
+        setMoveError('Mutarea a fost salvată, dar rutele nu au putut fi reîncărcate. Reîncarcă datele înainte de o altă mutare.')
+      } else {
+        setMoveError(moveStopErrorMessage(error))
+      }
+    } finally {
+      setMovingStop(false)
+      mutationInFlight.current = false
+    }
+  }
+
   function handleDayChange(value: string) {
     if (!value) return
     setDay(value)
@@ -342,6 +388,8 @@ function App() {
     setRouteOrderError(null)
     setStopOrderError(null)
     setDraftOrder(null)
+    setMoveError(null)
+    setMoveDraft(null)
     setRouteForOrder({})
     setNotice(null)
   }
@@ -350,7 +398,8 @@ function App() {
   const stopCount = routes.reduce((sum, route) => sum + route.stops.length, 0)
   const selectedRoute = routes.find(route => route.id === selectedRouteId) ?? routes[0]
   const busy = planning || creatingOrder || confirmingOrderId !== null ||
-    updatingStop !== null || addingOrderId !== null || savingStopOrder || draftOrder !== null
+    updatingStop !== null || addingOrderId !== null || savingStopOrder || draftOrder !== null ||
+    movingStop || moveDraft !== null
 
   return (
     <div className="app-shell">
@@ -452,6 +501,7 @@ function App() {
             <div className="panel-heading"><div><p className="section-kicker">02 / RUTE</p><h2 id="routes-title">Rutele zilei</h2></div><span className="count-pill">{loading ? '…' : routes.length}</span></div>
             {statusError && <div className="status-error" role="alert">{statusError}</div>}
             {stopOrderError && <div className="status-error" role="alert">{stopOrderError}</div>}
+            {moveError && <div className="status-error" role="alert">{moveError}</div>}
             {loading ? <p className="state-message" role="status">Se încarcă rutele…</p>
               : loadError ? <p className="state-message">Rutele nu sunt disponibile.</p>
               : routes.length === 0 ? <div className="empty-routes"><div className="empty-icon" aria-hidden="true">⌁</div><strong>Nu există rute planificate</strong><p>Rutele pentru această zi vor apărea aici după planificare.</p></div>
@@ -463,6 +513,7 @@ function App() {
                   ? draftOrder.stopIds.map(id => route.stops.find(stop => stop.id === id)!).filter(Boolean)
                   : savedStops
                 const changed = editing && orderedStops.some((stop, position) => stop.id !== savedStops[position]?.id)
+                const destinationRoutes = routes.filter(candidate => candidate.id !== route.id && candidate.date === day)
                 return <article className={`route-card${selectedRoute?.id === route.id ? ' is-selected' : ''}`} key={route.id}>
                 <div className="route-header"><div><span className="route-index">RUTA {String(index + 1).padStart(2, '0')}</span><h3>{route.stops[0]?.zone || 'Rută'}</h3></div><div className="route-header-actions"><span className="stop-count">{route.stops.length} {route.stops.length === 1 ? 'oprire' : 'opriri'}</span><button type="button" className="route-select-button" aria-pressed={selectedRoute?.id === route.id} onClick={() => { setSelectedRouteId(route.id); setStatusError(null) }} disabled={busy}>{selectedRoute?.id === route.id ? 'Pe hartă' : 'Vezi pe hartă'}</button></div></div>
                 <div className="route-facts"><div><span>VEHICUL</span><strong>{route.vehicle.registrationNumber}</strong></div><div><span>ȘOFER</span><strong>{route.driver.fullName}</strong></div><div><span>VOLUM TOTAL</span><strong>{numberFormat.format(route.totalVolume)}</strong></div></div>
@@ -500,7 +551,39 @@ function App() {
                             ? 'Se salvează…' : stopActionLabels[nextStatus]}
                         </button>)
                         : <span className="stop-final">Stare finală</span>}
+                      {stop.deliveryStatus === 'Pending' && <button type="button"
+                        disabled={busy || loading}
+                        onClick={() => {
+                          setMoveDraft({ sourceRouteId: route.id, stopId: stop.id,
+                            destinationRouteId: destinationRoutes[0]?.id ?? '' })
+                          setMoveError(null)
+                        }}>
+                        Mută în altă rută
+                      </button>}
                     </span>}
+                    {moveDraft?.sourceRouteId === route.id && moveDraft.stopId === stop.id &&
+                      <span className="move-controls">
+                        {destinationRoutes.length === 0
+                          ? <span>Nu există altă rută în ziua selectată.</span>
+                          : <label>Rută destinație
+                            <select value={moveDraft.destinationRouteId} disabled={movingStop}
+                              onChange={event => {
+                                setMoveDraft(current => current && { ...current, destinationRouteId: event.target.value })
+                                setMoveError(null)
+                              }}>
+                              {destinationRoutes.map(candidate => <option key={candidate.id} value={candidate.id}>
+                                Ruta {routes.indexOf(candidate) + 1} · {candidate.vehicle.registrationNumber} · {candidate.stops[0]?.zone ?? 'fără zonă'}
+                              </option>)}
+                            </select>
+                          </label>}
+                        <span className="move-buttons">
+                          <button type="button" className="route-select-button" disabled={movingStop}
+                            onClick={() => { setMoveDraft(null); setMoveError(null) }}>Anulează</button>
+                          <button type="button" className="confirm-button"
+                            disabled={!moveDraft.destinationRouteId || movingStop}
+                            onClick={handleMoveStop}>{movingStop ? 'Se mută…' : 'Confirmă mutarea'}</button>
+                        </span>
+                      </span>}
                   </span>
                 </li>)}</ol>
                 {editing && <div className="reorder-footer">
