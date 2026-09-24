@@ -17,6 +17,7 @@ builder.Services.AddScoped<RoutePlanningService>();
 builder.Services.AddScoped<RouteQueryService>();
 builder.Services.AddScoped<RouteOrderService>();
 builder.Services.AddScoped<RouteStopStatusService>();
+builder.Services.AddScoped<RouteStopOrderService>();
 builder.Services.AddSingleton(new PlanningSettings(
     builder.Configuration.GetValue<double?>("Planning:DepotLatitude"),
     builder.Configuration.GetValue<double?>("Planning:DepotLongitude")));
@@ -190,6 +191,18 @@ app.MapPatch("/api/routes/{routeId}/stops/{stopId}/status", async (Guid routeId,
     .Produces<UpdateRouteStopStatusResponse>()
     .ProducesProblem(StatusCodes.Status400BadRequest)
     .ProducesProblem(StatusCodes.Status404NotFound)
+    .ProducesProblem(StatusCodes.Status409Conflict);
+
+app.MapPut("/api/routes/{routeId}/stops/order", async (Guid routeId, ReorderRouteStopsRequest request,
+        RouteStopOrderService service, CancellationToken cancellationToken) =>
+    {
+        var route = await service.ReorderAsync(routeId, request, cancellationToken);
+        return route is null ? Results.NotFound() : Results.Ok(route);
+    })
+    .WithTags("Routes")
+    .Produces<RouteResponse>()
+    .Produces(StatusCodes.Status404NotFound)
+    .ProducesProblem(StatusCodes.Status400BadRequest)
     .ProducesProblem(StatusCodes.Status409Conflict);
 
 app.Run();

@@ -142,3 +142,15 @@ h3{margin:5px 0 0;font-size:17px;letter-spacing:-.025em}
 .add-to-route-controls .confirm-button{margin-top:0}
 .add-to-route-controls select:disabled{opacity:.55}
 .route-unavailable{display:block;max-width:210px;margin-top:7px;color:#87938d;font-size:11px;line-height:1.4}
+.stop-order-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.stop-order-heading p{margin:0 0 12px;color:#86928d;font-size:10px;font-weight:800;letter-spacing:.12em}
+.stop-order-heading .route-select-button{white-space:normal;text-align:center}
+.reorder-note{margin:4px 0 12px;color:#87938d;font-size:11px;line-height:1.4}
+.reorder-stop{cursor:grab}
+.reorder-stop:active{cursor:grabbing}
+.reorder-stop:hover{background:#f6faef}
+.reorder-actions{cursor:default}
+.reorder-footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid #ecf0ee;color:#65746a;font-size:11px}
+.reorder-footer>div{display:flex;align-items:center;gap:8px}
+.reorder-footer .confirm-button{margin-top:0}
+@media(max-width:600px){.reorder-footer>div{width:100%}.reorder-footer button{flex:1}}

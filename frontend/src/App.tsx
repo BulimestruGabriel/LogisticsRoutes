@@ -5,8 +5,10 @@ import {
   confirmOrder,
   createOrder,
   getOrders,
+  getRoute,
   getRoutes,
   planRoutes,
+  saveRouteStopOrder,
   updateRouteStopStatus,
   type DeliveryStatus,
   type CreateOrderRequest,
@@ -130,6 +132,9 @@ function App() {
   const [statusError, setStatusError] = useState<string | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [routeOrderError, setRouteOrderError] = useState<string | null>(null)
+  const [stopOrderError, setStopOrderError] = useState<string | null>(null)
+  const [draftOrder, setDraftOrder] = useState<{ routeId: string; stopIds: string[] } | null>(null)
+  const [savingStopOrder, setSavingStopOrder] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
@@ -281,6 +286,49 @@ function App() {
     }
   }
 
+  function moveStop(routeId: string, fromId: string, toId: string) {
+    setDraftOrder(current => {
+      if (current?.routeId !== routeId) return current
+      const from = current.stopIds.indexOf(fromId)
+      const to = current.stopIds.indexOf(toId)
+      if (from < 0 || to < 0 || from === to) return current
+      const stopIds = [...current.stopIds]
+      stopIds.splice(from, 1)
+      stopIds.splice(to, 0, fromId)
+      return { routeId, stopIds }
+    })
+  }
+
+  async function handleSaveStopOrder() {
+    if (!draftOrder || mutationInFlight.current) return
+    const routeId = draftOrder.routeId
+    mutationInFlight.current = true
+    setSavingStopOrder(true)
+    setStopOrderError(null)
+    setNotice(null)
+    try {
+      await saveRouteStopOrder(routeId, draftOrder.stopIds)
+      const refreshed = await getRoute(routeId)
+      setRoutes(current => current.map(route => route.id === refreshed.id ? refreshed : route))
+      setDraftOrder(null)
+      setNotice('Ordinea opririlor a fost salvată.')
+    } catch (error) {
+      setDraftOrder(null)
+      setStopOrderError(errorMessage(error))
+      if (error instanceof ApiError && error.status === 409) {
+        try {
+          const refreshed = await getRoute(routeId)
+          setRoutes(current => current.map(route => route.id === refreshed.id ? refreshed : route))
+        } catch {
+          // Keep the last loaded route and the original error visible.
+        }
+      }
+    } finally {
+      setSavingStopOrder(false)
+      mutationInFlight.current = false
+    }
+  }
+
   function handleDayChange(value: string) {
     if (!value) return
     setDay(value)
@@ -292,6 +340,8 @@ function App() {
     setStatusError(null)
     setConfirmError(null)
     setRouteOrderError(null)
+    setStopOrderError(null)
+    setDraftOrder(null)
     setRouteForOrder({})
     setNotice(null)
   }
@@ -300,7 +350,7 @@ function App() {
   const stopCount = routes.reduce((sum, route) => sum + route.stops.length, 0)
   const selectedRoute = routes.find(route => route.id === selectedRouteId) ?? routes[0]
   const busy = planning || creatingOrder || confirmingOrderId !== null ||
-    updatingStop !== null || addingOrderId !== null
+    updatingStop !== null || addingOrderId !== null || savingStopOrder || draftOrder !== null
 
   return (
     <div className="app-shell">
@@ -401,16 +451,47 @@ function App() {
           <section className="panel routes-panel" aria-labelledby="routes-title">
             <div className="panel-heading"><div><p className="section-kicker">02 / RUTE</p><h2 id="routes-title">Rutele zilei</h2></div><span className="count-pill">{loading ? '…' : routes.length}</span></div>
             {statusError && <div className="status-error" role="alert">{statusError}</div>}
+            {stopOrderError && <div className="status-error" role="alert">{stopOrderError}</div>}
             {loading ? <p className="state-message" role="status">Se încarcă rutele…</p>
               : loadError ? <p className="state-message">Rutele nu sunt disponibile.</p>
               : routes.length === 0 ? <div className="empty-routes"><div className="empty-icon" aria-hidden="true">⌁</div><strong>Nu există rute planificate</strong><p>Rutele pentru această zi vor apărea aici după planificare.</p></div>
-              : <div className="route-list">{routes.map((route, index) => <article className={`route-card${selectedRoute?.id === route.id ? ' is-selected' : ''}`} key={route.id}>
+              : <div className="route-list">{routes.map((route, index) => {
+                const editing = draftOrder?.routeId === route.id
+                const canReorder = route.stops.length > 1 && route.stops.every(stop => stop.deliveryStatus === 'Pending')
+                const savedStops = [...route.stops].sort((a, b) => a.sequence - b.sequence)
+                const orderedStops = editing
+                  ? draftOrder.stopIds.map(id => route.stops.find(stop => stop.id === id)!).filter(Boolean)
+                  : savedStops
+                const changed = editing && orderedStops.some((stop, position) => stop.id !== savedStops[position]?.id)
+                return <article className={`route-card${selectedRoute?.id === route.id ? ' is-selected' : ''}`} key={route.id}>
                 <div className="route-header"><div><span className="route-index">RUTA {String(index + 1).padStart(2, '0')}</span><h3>{route.stops[0]?.zone || 'Rută'}</h3></div><div className="route-header-actions"><span className="stop-count">{route.stops.length} {route.stops.length === 1 ? 'oprire' : 'opriri'}</span><button type="button" className="route-select-button" aria-pressed={selectedRoute?.id === route.id} onClick={() => { setSelectedRouteId(route.id); setStatusError(null) }} disabled={busy}>{selectedRoute?.id === route.id ? 'Pe hartă' : 'Vezi pe hartă'}</button></div></div>
                 <div className="route-facts"><div><span>VEHICUL</span><strong>{route.vehicle.registrationNumber}</strong></div><div><span>ȘOFER</span><strong>{route.driver.fullName}</strong></div><div><span>VOLUM TOTAL</span><strong>{numberFormat.format(route.totalVolume)}</strong></div></div>
-                <div className="stops"><p>OPRIRI ÎN ORDINE</p><ol>{[...route.stops].sort((a, b) => a.sequence - b.sequence).map(stop => <li key={stop.id}>
-                  <span className="sequence">{String(stop.sequence).padStart(2, '0')}</span>
+                <div className="stops"><div className="stop-order-heading"><p>{editing ? 'ORDINE PROPUSĂ' : 'OPRIRI ÎN ORDINE'}</p>
+                  {selectedRoute?.id === route.id && !editing && canReorder &&
+                    <button type="button" className="route-select-button" disabled={busy || loading}
+                      onClick={() => { setDraftOrder({ routeId: route.id, stopIds: orderedStops.map(stop => stop.id) }); setStopOrderError(null) }}>
+                      Reordonează opririle
+                    </button>}
+                </div>
+                {selectedRoute?.id === route.id && !editing && !canReorder && route.stops.some(stop => stop.deliveryStatus !== 'Pending') &&
+                  <p className="reorder-note">Ordinea nu mai poate fi schimbată după începerea unei opriri.</p>}
+                <ol>{orderedStops.map((stop, position) => <li key={stop.id}
+                  className={editing ? 'reorder-stop' : undefined}
+                  draggable={editing && !savingStopOrder}
+                  onDragStart={editing ? event => { event.dataTransfer.setData('text/plain', stop.id); event.dataTransfer.effectAllowed = 'move' } : undefined}
+                  onDragOver={editing ? event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' } : undefined}
+                  onDrop={editing ? event => { event.preventDefault(); moveStop(route.id, event.dataTransfer.getData('text/plain'), stop.id) } : undefined}>
+                  <span className="sequence">{String(position + 1).padStart(2, '0')}</span>
                   <span className="stop-detail"><strong>{stop.address}</strong><small>{stop.zone} · {numberFormat.format(stop.volume)} · {deliveryLabels[stop.deliveryStatus] ?? stop.deliveryStatus}</small>
-                    {selectedRoute?.id === route.id && <span className="stop-actions">
+                    {editing && <span className="stop-actions reorder-actions">
+                      <button type="button" disabled={position === 0 || savingStopOrder}
+                        onClick={() => moveStop(route.id, stop.id, orderedStops[position - 1].id)}
+                        aria-label={`Mută oprirea ${stop.address} sus`}>Sus</button>
+                      <button type="button" disabled={position === orderedStops.length - 1 || savingStopOrder}
+                        onClick={() => moveStop(route.id, stop.id, orderedStops[position + 1].id)}
+                        aria-label={`Mută oprirea ${stop.address} jos`}>Jos</button>
+                    </span>}
+                    {selectedRoute?.id === route.id && !editing && <span className="stop-actions">
                       {nextStopStatuses[stop.deliveryStatus]?.length
                         ? nextStopStatuses[stop.deliveryStatus].map(nextStatus => <button key={nextStatus} type="button"
                           onClick={() => handleStopStatus(route.id, stop.id, nextStatus)}
@@ -421,8 +502,15 @@ function App() {
                         : <span className="stop-final">Stare finală</span>}
                     </span>}
                   </span>
-                </li>)}</ol></div>
-              </article>)}</div>}
+                </li>)}</ol>
+                {editing && <div className="reorder-footer">
+                  <span>Trage opririle sau folosește butoanele Sus/Jos.</span>
+                  <div><button type="button" className="route-select-button" disabled={savingStopOrder}
+                    onClick={() => setDraftOrder(null)}>Anulează</button>
+                    <button type="button" className="confirm-button" disabled={!changed || savingStopOrder}
+                      onClick={handleSaveStopOrder}>{savingStopOrder ? 'Se salvează…' : 'Salvează ordinea'}</button></div>
+                </div>}</div>
+              </article>})}</div>}
           </section>
         </div>
 

@@ -158,6 +158,18 @@ export function getRoutes(day: string, signal?: AbortSignal): Promise<RouteRespo
   return request(`/api/routes?day=${encodeURIComponent(day)}`, { signal })
 }
 
+export function getRoute(routeId: string): Promise<RouteResponse> {
+  return request(`/api/routes/${encodeURIComponent(routeId)}`)
+}
+
+export function saveRouteStopOrder(routeId: string, stopIds: string[]): Promise<RouteResponse> {
+  return request(`/api/routes/${encodeURIComponent(routeId)}/stops/order`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stopIds }),
+  })
+}
+
 export function addOrderToRoute(routeId: string, orderId: string): Promise<RouteResponse> {
   return request(`/api/routes/${encodeURIComponent(routeId)}/orders`, {
     method: 'POST',
