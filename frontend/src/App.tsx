@@ -18,9 +18,11 @@ import {
   type RouteResponse,
 } from './api'
 import { deliveryLabels, numberFormat } from './format'
+import { startDayRefresh } from './dayRefresh'
 import NewOrderForm from './NewOrderForm'
 import ResourceManagement from './ResourceManagement'
 import RouteMap from './RouteMap'
+import { routeProgress } from './routeProgress'
 
 const orderLabels: Record<OrderStatus, string> = {
   New: 'Nouă',
@@ -138,6 +140,9 @@ function App() {
   const mutationInFlight = useRef(false)
   const [reload, setReload] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [refreshError, setRefreshError] = useState(false)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
+  const lastSuccessfulDay = useRef<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
@@ -153,27 +158,32 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
-    setLoadError(null)
-    setOrders([])
-    setRoutes([])
-
-    Promise.all([getOrders(day, controller.signal), getRoutes(day, controller.signal)])
-      .then(([nextOrders, nextRoutes]) => {
-        if (!controller.signal.aborted) {
-          setOrders(nextOrders)
-          setRoutes(nextRoutes)
+    const hasCurrentData = lastSuccessfulDay.current === day
+    setLoading(!hasCurrentData)
+    if (!hasCurrentData) setLoadError(null)
+    const refresh = startDayRefresh({
+      day,
+      getOrders,
+      getRoutes,
+      onSuccess: (nextOrders, nextRoutes, updatedAt) => {
+        lastSuccessfulDay.current = day
+        setOrders(nextOrders)
+        setRoutes(nextRoutes)
+        setLastUpdatedAt(updatedAt)
+        setLoadError(null)
+        setRefreshError(false)
+        setLoading(false)
+      },
+      onFailure: error => {
+        if (lastSuccessfulDay.current === day) {
+          setRefreshError(true)
+        } else {
+          setLoadError(errorMessage(error))
         }
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) setLoadError(errorMessage(error))
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-
-    return () => controller.abort()
+        setLoading(false)
+      },
+    })
+    return refresh.stop
   }, [day, reload])
 
   async function handlePlan() {
@@ -245,6 +255,9 @@ function App() {
         setOrders([])
         setRoutes([])
         setSelectedRouteId(null)
+        lastSuccessfulDay.current = null
+        setLastUpdatedAt(null)
+        setRefreshError(false)
       }
       setNotice('Comanda a fost salvată. O poți confirma din lista comenzilor.')
       return created
@@ -382,6 +395,9 @@ function App() {
     setOrders([])
     setRoutes([])
     setSelectedRouteId(null)
+    lastSuccessfulDay.current = null
+    setLastUpdatedAt(null)
+    setRefreshError(false)
     setActionError(null)
     setStatusError(null)
     setConfirmError(null)
@@ -397,6 +413,7 @@ function App() {
   const confirmedCount = orders.filter(order => order.status === 'Confirmed').length
   const stopCount = routes.reduce((sum, route) => sum + route.stops.length, 0)
   const selectedRoute = routes.find(route => route.id === selectedRouteId) ?? routes[0]
+  const selectedProgress = selectedRoute ? routeProgress(selectedRoute.stops) : null
   const busy = planning || creatingOrder || confirmingOrderId !== null ||
     updatingStop !== null || addingOrderId !== null || savingStopOrder || draftOrder !== null ||
     movingStop || moveDraft !== null
@@ -433,6 +450,13 @@ function App() {
             <span aria-hidden="true">✦</span> {planning ? 'Se planifică…' : 'Planifică rutele'}
           </button>
         </section>
+
+        <div className="day-refresh-status" role="status" aria-live="polite">
+          <span>{lastUpdatedAt
+            ? `Comenzi și rute actualizate la ${lastUpdatedAt.toLocaleTimeString('ro-MD', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+            : 'Se așteaptă prima actualizare a comenzilor și rutelor.'}</span>
+          {refreshError && <span className="day-refresh-warning">Actualizarea a eșuat; se afișează ultimele date primite.</span>}
+        </div>
 
         {loadError && <div className="alert alert-error" role="alert">
           <strong>Nu am putut încărca datele.</strong> {loadError}
@@ -599,6 +623,14 @@ function App() {
 
         <section className="panel map-panel" aria-labelledby="map-title">
           <div className="panel-heading"><div><p className="section-kicker">03 / HARTĂ</p><h2 id="map-title">Harta rutei {selectedRoute ? `· ${selectedRoute.stops[0]?.zone || 'selectate'}` : ''}</h2></div></div>
+          {selectedProgress && !loading && !loadError && <div className="route-progress" aria-label="Progresul rutei selectate">
+            <div className="route-progress-total"><strong>{selectedProgress.finished} / {selectedProgress.total}</strong><span>opriri încheiate</span></div>
+            <div className="route-progress-breakdown">
+              <span className="progress-delivered">Livrate <strong>{selectedProgress.delivered}</strong></span>
+              <span className="progress-refused">Refuzate <strong>{selectedProgress.refused}</strong></span>
+              <span className="progress-partialreturn">Retur parțial <strong>{selectedProgress.partialReturn}</strong></span>
+            </div>
+          </div>}
           {loading ? <p className="state-message" role="status">Se încarcă harta…</p>
             : loadError ? <p className="state-message">Harta nu este disponibilă până la încărcarea rutelor.</p>
             : !selectedRoute ? <p className="state-message">Nu există rute pentru această zi. Selectează altă zi sau planifică rutele pentru a vedea opririle pe hartă.</p>

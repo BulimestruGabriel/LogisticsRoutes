@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { divIcon, latLngBounds, type LatLngTuple } from 'leaflet'
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
-import { getRoutePosition, type RoutePositionResponse, type RouteResponse, type RouteStopResponse } from './api'
+import { getRoutePosition, type DeliveryStatus, type RoutePositionResponse, type RouteResponse, type RouteStopResponse } from './api'
 import { deliveryLabels, numberFormat } from './format'
 import { loadRoadRoute, type RoadRoute } from './routing'
 import 'leaflet/dist/leaflet.css'
@@ -33,10 +33,14 @@ function FitSelectedRoute({ positions }: { positions: LatLngTuple[] }) {
   return null
 }
 
-function numberedIcon(sequence: number) {
+const stopStatuses: DeliveryStatus[] = [
+  'Pending', 'Departed', 'Arrived', 'Delivered', 'Refused', 'PartialReturn',
+]
+
+function numberedIcon(sequence: number, status: DeliveryStatus) {
   const label = Number.isInteger(sequence) ? String(sequence) : '?'
   return divIcon({
-    className: 'numbered-marker',
+    className: `numbered-marker numbered-marker-${status.toLowerCase()}`,
     html: `<span>${label}</span>`,
     iconSize: [32, 32],
     iconAnchor: [16, 16],
@@ -72,9 +76,9 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
     }
     return { validStops, invalidStops }
   }, [route.stops])
-  const positions = useMemo(() => validStops.map(item => item.position), [validStops])
   const routeKey = `${route.id}|${validStops.map(({ stop }) =>
     `${stop.id}:${stop.sequence}:${stop.latitude}:${stop.longitude}`).join('|')}`
+  const positions = useMemo(() => validStops.map(item => item.position), [routeKey])
   const routingBaseUrl = import.meta.env.VITE_OSRM_BASE_URL?.trim() ?? ''
   const [routing, setRouting] = useState<{ key: string; road: RoadRoute | null } | null>(null)
   const [tracking, setTracking] = useState<{
@@ -169,7 +173,9 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
               positions={linePositions}
               pathOptions={{ color: '#527c32', weight: 3, opacity: 0.85,
                 dashArray: road ? undefined : '7 7' }} />}
-            {validStops.map(({ stop, position }) => <Marker key={stop.id} position={position} icon={numberedIcon(stop.sequence)}>
+            {validStops.map(({ stop, position }) => <Marker key={stop.id} position={position}
+              icon={numberedIcon(stop.sequence, stop.deliveryStatus)}
+              aria-label={`Oprirea ${stop.sequence}: ${deliveryLabels[stop.deliveryStatus]}`}>
               <Popup>
                 <div className="stop-popup">
                   <strong>Oprirea {stop.sequence}: {stop.address}</strong>
@@ -189,6 +195,12 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
               </div></Popup>
             </Marker>}
           </MapContainer>
+        </div>
+        <div className="stop-status-legend" aria-label="Legenda stărilor opririlor">
+          {stopStatuses.map(status => <span className="stop-status-legend-item" key={status}>
+            <span className={`stop-status-swatch numbered-marker-${status.toLowerCase()}`} aria-hidden="true" />
+            {deliveryLabels[status]}
+          </span>)}
         </div>
         {positions.length > 1
           ? road

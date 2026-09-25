@@ -72,6 +72,8 @@ După migrarea bazei (`dotnet ef database update --project LogisticsRoutes.Busin
 
 Dispecerul citește poziția rutei selectate la fiecare 3 secunde, fără reîncărcarea paginii. Marcajul vehiculului este distinct de opriri. Interfața arată momentul ultimei primiri și marchează datele drept vechi când ora raportării este cu peste 60 de secunde în urmă; arată și absența sau indisponibilitatea poziției. O poziție cu `source: "Simulated"` este etichetată vizibil ca **simulată, nu GPS real**. Sursa `Reported` indică o raportare autorizată pentru acea rută; nu dovedește că dispozitivul sau coordonatele sunt autentice și nu oferă ETA.
 
+Pentru ruta selectată, Dispecerul arată separat opririle încheiate din total și numărul celor `Delivered`, `Refused` și `PartialReturn`. Toate trei sunt stări finale; o oprire refuzată nu este numărată ca livrată. Numărul `Sequence` rămâne pe fiecare marcaj, iar culoarea arată starea din legenda hărții; popup-ul păstrează statusul scris. Comenzile și rutele zilei se reîmprospătează aproximativ la 30 de secunde, păstrând ruta selectată. Ora ultimei actualizări reușite este afișată în Dispecer; dacă o cerere eșuează, ultimele date rămân vizibile și apare un mesaj discret. Intervalul separat de 3 secunde pentru poziția vehiculului rămâne neschimbat.
+
 Generează o cheie aleatoare pentru semnarea tokenurilor și păstreaz-o numai pe server. În dezvoltare, [User Secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets) o păstrează în afara repository-ului; repornește API-ul după configurare:
 
 ```powershell
