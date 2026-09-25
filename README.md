@@ -66,6 +66,20 @@ Exemplul setează `VITE_OSRM_BASE_URL=http://127.0.0.1:5000`, fără `/route/v1/
 
 Harta păstrează atribuirea OpenStreetMap pentru plăcile afișate. Traseul acoperă numai opririle rutei, fără segmentul de la sau către depozit. Distanța și durata provin din profilul și datele serviciului de rutare; durata este estimativă și nu stabilește ora sosirii. Acoperirea geografică, disponibilitatea și limitele de cereri depind de serviciul configurat. Când acesta lipsește, răspunde cu eroare sau nu găsește drum, harta păstrează marcajele și afișează o linie schematică. Pentru trafic sau utilizare susținută, configurează un serviciu administrat ori o instanță proprie, cu limite potrivite aplicației. Formatul cererii și răspunsului este descris în [documentația OSRM Route](https://project-osrm.org/docs/v5.22.0/api/#route-service).
 
+## Urmărirea poziției vehiculului (prima etapă)
+
+După migrarea bazei (`dotnet ef database update --project LogisticsRoutes.BusinessLayer --startup-project LogisticsRoutes.API`), API-ul acceptă `POST /api/routes/{routeId}/position` cu `latitude`, `longitude`, `reportedAt` (ISO 8601 cu fus orar) și `source` (`Reported` sau `Simulated`). `GET` pe aceeași adresă întoarce ultima poziție, `204` dacă ruta există dar nu are raportări și `404` pentru ruta inexistentă. Coordonatele din afara intervalelor latitudine −90…90 și longitudine −180…180, ora lipsă sau cu peste 5 minute în viitor și sursa necunoscută primesc `400`. O raportare mai veche decât ultima salvată primește `409`. Sunt salvate separat momentul raportării și momentul primirii. Raportarea nu schimbă opririle sau comenzile.
+
+Dispecerul citește poziția rutei selectate la fiecare 3 secunde, fără reîncărcarea paginii. Marcajul vehiculului este distinct de opriri. Interfața arată momentul ultimei primiri și marchează datele drept vechi când ora raportării este cu peste 60 de secunde în urmă; arată și absența sau indisponibilitatea poziției. O poziție cu `source: "Simulated"` este etichetată vizibil ca **simulată, nu GPS real**. Sursa `Reported` indică doar o raportare către API; această etapă nu autentifică dispozitivul și nu oferă ETA sau urmărire GPS verificată.
+
+Pentru a vedea marcajul mișcându-se în dezvoltare, pornește API-ul și frontendul local, apoi alege o rută de test cu minimum două opriri. Copiază ID-ul rutei din `GET http://localhost:5212/api/routes?day=YYYY-MM-DD` și rulează din rădăcina repository-ului:
+
+```powershell
+./scripts/dev/simulate-route-position.ps1 -RouteId '<ID-ul-rutei>' -IntervalSeconds 2
+```
+
+Simulatorul acceptă numai API local (`localhost` sau `127.0.0.1`), interpolează coordonatele opririlor și repetă traseul până la `Ctrl+C`. Pentru o singură trecere folosește `-Cycles 1`; pentru alt port local adaugă `-ApiBaseUrl 'http://127.0.0.1:<port>'`. Pozițiile sunt artificiale, între opriri în linie dreaptă, și nu reprezintă poziția reală a vehiculului. Nu trimite coordonatele comenzilor către un serviciu public din acest simulator.
+
 ## Planificarea rutelor
 
 Înainte de `POST /api/routes/plan`, configurează coordonatele **depozitului tău** prin `Planning:DepotLatitude` și `Planning:DepotLongitude`. Nu există coordonate implicite.

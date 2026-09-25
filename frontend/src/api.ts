@@ -65,6 +65,20 @@ export interface RouteResponse {
   stops: RouteStopResponse[]
 }
 
+export interface RoutePositionResponse {
+  routeId: string
+  latitude: number
+  longitude: number
+  reportedAt: string
+  receivedAt: string
+  source: 'Reported' | 'Simulated'
+}
+
+export async function getRoutePosition(routeId: string, signal?: AbortSignal): Promise<RoutePositionResponse | null> {
+  return (await request<RoutePositionResponse | undefined>(`/api/routes/${encodeURIComponent(routeId)}/position`,
+    { signal })) ?? null
+}
+
 export interface PlanRoutesRequest {
   day: string
 }

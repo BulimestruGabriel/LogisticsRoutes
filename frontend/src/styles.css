@@ -161,3 +161,10 @@ h3{margin:5px 0 0;font-size:17px;letter-spacing:-.025em}
 .move-buttons{display:flex;flex-wrap:wrap;gap:7px}
 .move-buttons .confirm-button{margin-top:0}
 .move-buttons button:disabled{cursor:not-allowed;opacity:.55}
+.vehicle-status{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:18px 24px 0;padding:11px 13px;border:1px solid #d7e4ed;border-radius:8px;background:#f3f9fd;color:#385366;font-size:12px;line-height:1.5}
+.vehicle-status strong{color:#8a501e}
+.vehicle-status-badge{flex:none;padding:4px 8px;border-radius:6px;background:#d7eee7;color:#24654e;font-weight:800}
+.vehicle-status-badge.is-stale{background:#ffe8cc;color:#8a501e}
+.vehicle-marker{display:grid;place-items:center;border:3px solid #fff;border-radius:50%;background:#12628c;box-shadow:0 2px 10px #102c4155;color:#fff;font-size:9px;font-weight:900;letter-spacing:.02em;text-align:center}
+.vehicle-marker-simulated{background:#af661b}
+@media(max-width:600px){.vehicle-status{margin:15px 15px 0}}

@@ -10,6 +10,7 @@ public class LogisticsDbContext(DbContextOptions<LogisticsDbContext> options) : 
     public DbSet<Driver> Drivers => Set<Driver>();
     public DbSet<Route> Routes => Set<Route>();
     public DbSet<RouteStop> RouteStops => Set<RouteStop>();
+    public DbSet<RoutePosition> RoutePositions => Set<RoutePosition>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -52,6 +53,16 @@ public class LogisticsDbContext(DbContextOptions<LogisticsDbContext> options) : 
             entity.HasIndex(stop => new { stop.RouteId, stop.Sequence }).IsUnique();
             entity.HasIndex(stop => stop.OrderId).IsUnique();
             entity.Property(stop => stop.DeliveryStatus).HasConversion<string>().HasColumnType("text");
+        });
+
+        modelBuilder.Entity<RoutePosition>(entity =>
+        {
+            entity.HasKey(position => position.RouteId);
+            entity.HasOne(position => position.Route)
+                .WithOne()
+                .HasForeignKey<RoutePosition>(position => position.RouteId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.Property(position => position.Source).HasConversion<string>().HasColumnType("text");
         });
     }
 }

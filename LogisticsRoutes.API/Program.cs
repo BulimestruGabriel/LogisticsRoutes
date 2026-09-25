@@ -19,6 +19,7 @@ builder.Services.AddScoped<RouteOrderService>();
 builder.Services.AddScoped<RouteStopStatusService>();
 builder.Services.AddScoped<RouteStopOrderService>();
 builder.Services.AddScoped<RouteStopMoveService>();
+builder.Services.AddScoped<RoutePositionService>();
 builder.Services.AddSingleton(new PlanningSettings(
     builder.Configuration.GetValue<double?>("Planning:DepotLatitude"),
     builder.Configuration.GetValue<double?>("Planning:DepotLongitude")));
@@ -55,6 +56,11 @@ app.Use(async (context, next) =>
             .ExecuteAsync(context);
     }
     catch (RouteOrderConflictException exception)
+    {
+        await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status409Conflict)
+            .ExecuteAsync(context);
+    }
+    catch (RoutePositionConflictException exception)
     {
         await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status409Conflict)
             .ExecuteAsync(context);
@@ -212,6 +218,30 @@ app.MapPost("/api/routes/{sourceRouteId}/stops/{stopId}/move", async (Guid sourc
             ? Results.NoContent() : Results.NotFound())
     .WithTags("Routes")
     .Produces(StatusCodes.Status204NoContent)
+    .Produces(StatusCodes.Status404NotFound)
+    .ProducesProblem(StatusCodes.Status400BadRequest)
+    .ProducesProblem(StatusCodes.Status409Conflict);
+
+app.MapGet("/api/routes/{routeId}/position", async (Guid routeId, RoutePositionService service,
+        CancellationToken cancellationToken) =>
+    {
+        var (routeExists, position) = await service.GetAsync(routeId, cancellationToken);
+        return !routeExists ? Results.NotFound()
+            : position is null ? Results.NoContent() : Results.Ok(position);
+    })
+    .WithTags("Routes")
+    .Produces<RoutePositionResponse>()
+    .Produces(StatusCodes.Status204NoContent)
+    .Produces(StatusCodes.Status404NotFound);
+
+app.MapPost("/api/routes/{routeId}/position", async (Guid routeId, ReportRoutePositionRequest request,
+        RoutePositionService service, CancellationToken cancellationToken) =>
+    {
+        var position = await service.ReportAsync(routeId, request, cancellationToken);
+        return position is null ? Results.NotFound() : Results.Ok(position);
+    })
+    .WithTags("Routes")
+    .Produces<RoutePositionResponse>()
     .Produces(StatusCodes.Status404NotFound)
     .ProducesProblem(StatusCodes.Status400BadRequest)
     .ProducesProblem(StatusCodes.Status409Conflict);

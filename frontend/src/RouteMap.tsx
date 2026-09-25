@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { divIcon, latLngBounds, type LatLngTuple } from 'leaflet'
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
-import type { RouteResponse, RouteStopResponse } from './api'
+import { getRoutePosition, type RoutePositionResponse, type RouteResponse, type RouteStopResponse } from './api'
 import { deliveryLabels, numberFormat } from './format'
 import { loadRoadRoute, type RoadRoute } from './routing'
 import 'leaflet/dist/leaflet.css'
@@ -43,6 +43,22 @@ function numberedIcon(sequence: number) {
   })
 }
 
+function vehicleIcon(simulated: boolean) {
+  return divIcon({
+    className: `vehicle-marker${simulated ? ' vehicle-marker-simulated' : ''}`,
+    html: `<span>${simulated ? 'SIM' : 'AUTO'}</span>`,
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
+  })
+}
+
+const positionPollMilliseconds = 3000
+const staleAfterMilliseconds = 60000
+
+function formatMoment(value: string): string {
+  return new Date(value).toLocaleString('ro-MD', { dateStyle: 'short', timeStyle: 'medium' })
+}
+
 export default function RouteMap({ route }: { route: RouteResponse }) {
   const { validStops, invalidStops } = useMemo(() => {
     const validStops: MappedStop[] = []
@@ -61,6 +77,15 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
     `${stop.id}:${stop.sequence}:${stop.latitude}:${stop.longitude}`).join('|')}`
   const routingBaseUrl = import.meta.env.VITE_OSRM_BASE_URL?.trim() ?? ''
   const [routing, setRouting] = useState<{ key: string; road: RoadRoute | null } | null>(null)
+  const [tracking, setTracking] = useState<{
+    routeId: string; position: RoutePositionResponse | null; error: boolean; loaded: boolean
+  } | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const currentTracking = tracking?.routeId === route.id ? tracking : null
+  const vehicle = currentTracking?.position ?? null
+  const vehiclePosition: LatLngTuple | null = vehicle ? [vehicle.latitude, vehicle.longitude] : null
+  const stale = vehicle !== null && now - new Date(vehicle.reportedAt).getTime() > staleAfterMilliseconds
+  const simulated = vehicle?.source === 'Simulated'
   const road = routing?.key === routeKey ? routing.road : null
   const routeLoading = positions.length > 1 && !!routingBaseUrl && routing?.key !== routeKey
 
@@ -77,10 +102,51 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
     return () => controller.abort()
   }, [routeKey, routingBaseUrl, positions])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    let polling = false
+    setTracking({ routeId: route.id, position: null, error: false, loaded: false })
+    const refresh = async () => {
+      if (polling) return
+      polling = true
+      try {
+        const position = await getRoutePosition(route.id, controller.signal)
+        if (!controller.signal.aborted)
+          setTracking({ routeId: route.id, position, error: false, loaded: true })
+      } catch {
+        if (!controller.signal.aborted)
+          setTracking(current => ({ routeId: route.id,
+            position: current?.routeId === route.id ? current.position : null,
+            error: true, loaded: true }))
+      } finally {
+        polling = false
+        if (!controller.signal.aborted) setNow(Date.now())
+      }
+    }
+    void refresh()
+    const interval = window.setInterval(() => { void refresh(); setNow(Date.now()) }, positionPollMilliseconds)
+    return () => { controller.abort(); window.clearInterval(interval) }
+  }, [route.id])
+
   const linePositions = road?.positions ?? positions
+  const mapPositions = positions.length ? positions : vehiclePosition ? [vehiclePosition] : []
 
   return (
     <>
+      <div className="vehicle-status" role="status" aria-live="polite">
+        <span className={`vehicle-status-badge${!vehicle || stale || currentTracking?.error ? ' is-stale' : ''}`}>
+          {!currentTracking?.loaded ? 'Se caută poziția…' : currentTracking.error
+            ? 'Actualizare indisponibilă' : !vehicle ? 'Poziție lipsă'
+              : stale ? 'Date vechi' : 'Poziție recentă'}
+        </span>
+        {vehicle ? <span>
+          Ultima poziție primită: {formatMoment(vehicle.receivedAt)}. Raportată: {formatMoment(vehicle.reportedAt)}.
+          {simulated && <strong> Poziție simulată — nu este GPS real.</strong>}
+          {currentTracking?.error && ' Nu s-a putut actualiza poziția; se afișează ultima primită.'}
+        </span> : <span>{!currentTracking?.loaded ? 'Se verifică ultima poziție raportată.' : currentTracking.error
+          ? 'Poziția vehiculului nu poate fi citită momentan.'
+          : 'Nu a fost raportată încă nicio poziție pentru această rută.'}</span>}
+      </div>
       {invalidStops.length > 0 && <div className="map-warning" role="alert">
         <strong>{invalidStops.length === 1 ? 'O oprire are' : `${invalidStops.length} opriri au`} coordonate invalide.</strong>
         {' '}Nu {invalidStops.length === 1 ? 'poate fi afișată' : 'pot fi afișate'} pe hartă:
@@ -88,17 +154,17 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
         {' '}Celelalte opriri rămân vizibile.
       </div>}
 
-      {validStops.length === 0 ? <p className="map-unavailable">
-        Harta nu poate fi afișată: ruta selectată nu are opriri cu coordonate valide.
+      {mapPositions.length === 0 ? <p className="map-unavailable">
+        Harta nu poate fi afișată: ruta selectată nu are opriri sau poziție cu coordonate valide.
       </p> : <>
         <div className="map-frame">
-          <MapContainer key={route.id} center={positions[0]} zoom={13} scrollWheelZoom={false}
+          <MapContainer key={route.id} center={mapPositions[0]} zoom={13} scrollWheelZoom={false}
             className="route-map" aria-label="Harta opririlor rutei selectate">
             <TileLayer
               url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             />
-            <FitSelectedRoute positions={linePositions} />
+            <FitSelectedRoute positions={linePositions.length ? linePositions : mapPositions} />
             {positions.length > 1 && <Polyline key={`${routeKey}:${road ? 'road' : 'schematic'}`}
               positions={linePositions}
               pathOptions={{ color: '#527c32', weight: 3, opacity: 0.85,
@@ -113,6 +179,15 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
                 </div>
               </Popup>
             </Marker>)}
+            {vehiclePosition && <Marker position={vehiclePosition} icon={vehicleIcon(simulated)}
+              zIndexOffset={1000} aria-label="Poziția vehiculului">
+              <Popup><div className="stop-popup">
+                <strong>Vehicul {route.vehicle.registrationNumber}</strong>
+                <span>{simulated ? 'Poziție simulată — nu este GPS real.' : 'Poziție raportată.'}</span>
+                <span>Raportată: {formatMoment(vehicle!.reportedAt)}</span>
+                {stale && <span>Date vechi: peste 60 de secunde.</span>}
+              </div></Popup>
+            </Marker>}
           </MapContainer>
         </div>
         {positions.length > 1
@@ -127,7 +202,9 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
               {routeLoading ? 'Se calculează traseul rutier… ' : 'Traseul rutier nu este disponibil. '}
               Linia schematică unește direct opririle afișate.
             </span></p>
-          : <p className="map-legend">O singură oprire: nu există linie de legătură.</p>}
+          : <p className="map-legend">{positions.length === 1
+            ? 'O singură oprire: nu există linie de legătură.'
+            : 'Nu există opriri cu coordonate valide; se afișează doar poziția vehiculului.'}</p>}
       </>}
     </>
   )
