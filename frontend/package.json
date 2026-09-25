@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node --test src/routing.test.ts src/routeProgress.test.ts src/dayRefresh.test.ts src/routeIndicators.test.ts"
+    "test": "node --test src/routing.test.ts src/routeProgress.test.ts src/dayRefresh.test.ts src/routeIndicators.test.ts src/routeAddition.test.ts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

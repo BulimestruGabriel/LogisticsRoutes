@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import {
   ApiError,
   addOrderToRoute,
@@ -22,6 +22,7 @@ import { startDayRefresh } from './dayRefresh'
 import NewOrderForm from './NewOrderForm'
 import ResourceManagement from './ResourceManagement'
 import RouteMap from './RouteMap'
+import { routeAdditionCheck } from './routeAddition'
 import { additionPreview, capacityUsage } from './routeIndicators'
 import { routeProgress } from './routeProgress'
 
@@ -92,9 +93,9 @@ function confirmErrorMessage(error: unknown): string {
 
 function addToRouteErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 409) return `${error.message} Listele se reîncarcă.`
+    if (error.status === 409) return `Conflict (409): ${error.message} Listele se reîncarcă.`
     if (error.status === 404) return 'Ruta sau comanda nu mai există. Listele se reîncarcă.'
-    if (error.status === 400) return 'Cererea este invalidă. Verifică ruta și comanda selectate.'
+    if (error.status === 400) return `Cerere invalidă (400): ${error.message}`
   }
   return errorMessage(error)
 }
@@ -109,9 +110,7 @@ function moveStopErrorMessage(error: unknown): string {
 }
 
 function compatibleRoutes(order: OrderResponse, routes: RouteResponse[]): RouteResponse[] {
-  return routes.filter(route => route.date === order.deliveryDate && route.stops.length > 0 &&
-    route.stops.every(stop => stop.deliveryStatus === 'Pending' &&
-      stop.zone.toLocaleLowerCase('ro-RO') === order.zone.toLocaleLowerCase('ro-RO')))
+  return routes.filter(route => routeAdditionCheck(order, route).selectable)
 }
 
 function unavailableRouteReason(order: OrderResponse, routes: RouteResponse[]): string {
@@ -136,6 +135,8 @@ function App() {
   const [confirmingOrderId, setConfirmingOrderId] = useState<string | null>(null)
   const [addingOrderId, setAddingOrderId] = useState<string | null>(null)
   const [routeForOrder, setRouteForOrder] = useState<Record<string, string>>({})
+  const [dragOrderId, setDragOrderId] = useState<string | null>(null)
+  const [hoveredRouteId, setHoveredRouteId] = useState<string | null>(null)
   const [updatingStop, setUpdatingStop] = useState<{ stopId: string; status: DeliveryStatus } | null>(null)
   const mutationInFlight = useRef(false)
   const [reload, setReload] = useState(0)
@@ -169,6 +170,7 @@ function App() {
         lastSuccessfulDay.current = day
         setOrders(nextOrders)
         setRoutes(nextRoutes)
+        setDragOrderId(current => nextOrders.some(order => order.id === current && order.status === 'Confirmed') ? current : null)
         setLastUpdatedAt(updatedAt)
         setLoadError(null)
         setRefreshError(false)
@@ -294,8 +296,7 @@ function App() {
     if (mutationInFlight.current || !routeId) return
     const order = orders.find(item => item.id === orderId)
     const route = routes.find(item => item.id === routeId)
-    const preview = order && route ? additionPreview(route, order) : null
-    if (!order || order.status !== 'Confirmed' || !route || !preview || preview.exceeds) return
+    if (!order || !route || !routeAdditionCheck(order, route).accepted) return
     mutationInFlight.current = true
     setAddingOrderId(orderId)
     setRouteOrderError(null)
@@ -316,6 +317,22 @@ function App() {
       setAddingOrderId(null)
       mutationInFlight.current = false
     }
+  }
+
+  function handleDropOrder(event: DragEvent<HTMLElement>, route: RouteResponse) {
+    if (!dragOrderId) return
+    event.preventDefault()
+    const orderId = event.dataTransfer.getData('application/x-logistics-order-id')
+    const order = orders.find(item => item.id === orderId)
+    setDragOrderId(null)
+    setHoveredRouteId(null)
+    if (!order || order.id !== dragOrderId) return
+    const check = routeAdditionCheck(order, route)
+    if (!check.accepted) {
+      setRouteOrderError(`Comanda nu poate fi adăugată la ruta aleasă: ${check.reason}`)
+      return
+    }
+    void handleAddToRoute(order.id, route.id)
   }
 
   function moveStop(routeId: string, fromId: string, toId: string) {
@@ -411,12 +428,15 @@ function App() {
     setMoveError(null)
     setMoveDraft(null)
     setRouteForOrder({})
+    setDragOrderId(null)
+    setHoveredRouteId(null)
     setNotice(null)
   }
 
   const confirmedCount = orders.filter(order => order.status === 'Confirmed').length
   const stopCount = routes.reduce((sum, route) => sum + route.stops.length, 0)
   const selectedRoute = routes.find(route => route.id === selectedRouteId) ?? routes[0]
+  const draggedOrder = orders.find(order => order.id === dragOrderId && order.status === 'Confirmed')
   const selectedProgress = selectedRoute ? routeProgress(selectedRoute.stops) : null
   const selectedCapacity = selectedRoute ? capacityUsage(selectedRoute) : null
   const busy = planning || creatingOrder || confirmingOrderId !== null ||
@@ -499,8 +519,23 @@ function App() {
                     ? routeForOrder[order.id] : availableRoutes[0]?.id ?? ''
                   const chosenRoute = availableRoutes.find(route => route.id === chosenRouteId)
                   const preview = chosenRoute ? additionPreview(chosenRoute, order) : null
-                  return <tr key={order.id}>
-                  <td><strong>{order.address}</strong><span className="secondary-line">{order.zone}</span></td>
+                  return <tr key={order.id} className={dragOrderId === order.id ? 'is-being-dragged' : undefined}>
+                  <td><strong>{order.address}</strong><span className="secondary-line">{order.zone}</span>
+                    {order.status === 'Confirmed' && <span className="order-drag-handle"
+                      draggable={!busy && !loading}
+                      onDragStart={event => {
+                        if (busy || loading) { event.preventDefault(); return }
+                        event.dataTransfer.setData('application/x-logistics-order-id', order.id)
+                        event.dataTransfer.effectAllowed = 'copy'
+                        setDragOrderId(order.id)
+                        setHoveredRouteId(null)
+                        setRouteOrderError(null)
+                      }}
+                      onDragEnd={() => { setDragOrderId(null); setHoveredRouteId(null) }}
+                      title={`Trage comanda ${order.address} pe o rută`}>
+                      Trage pe o rută
+                    </span>}
+                  </td>
                   <td className="number-cell">{volumeFormat.format(order.volume)}</td>
                   <td className="order-status-cell"><span className={`status status-${order.status.toLowerCase()}`}>{orderLabels[order.status] ?? order.status}</span>
                     {order.status === 'New' && <button type="button" className="confirm-button"
@@ -525,7 +560,7 @@ function App() {
                             : 'Capacitatea nu poate fi calculată din datele primite.'}
                         </span>
                         <button type="button" className="confirm-button" onClick={() => handleAddToRoute(order.id, chosenRouteId)}
-                          disabled={busy || loading || !preview || preview.exceeds}>
+                          disabled={busy || loading || !chosenRoute || !routeAdditionCheck(order, chosenRoute).accepted}>
                           {addingOrderId === order.id ? 'Se adaugă…' : 'Adaugă la rută'}
                         </button>
                       </div>
@@ -537,6 +572,7 @@ function App() {
 
           <section className="panel routes-panel" aria-labelledby="routes-title">
             <div className="panel-heading"><div><p className="section-kicker">02 / RUTE</p><h2 id="routes-title">Rutele zilei</h2></div><span className="count-pill">{loading ? '…' : routes.length}</span></div>
+            {draggedOrder && <p className="drag-instruction">Trage „{draggedOrder.address}” pe o rută verde. Rutele care nu acceptă comanda arată motivul.</p>}
             {statusError && <div className="status-error" role="alert">{statusError}</div>}
             {stopOrderError && <div className="status-error" role="alert">{stopOrderError}</div>}
             {moveError && <div className="status-error" role="alert">{moveError}</div>}
@@ -544,6 +580,7 @@ function App() {
               : loadError ? <p className="state-message">Rutele nu sunt disponibile.</p>
               : routes.length === 0 ? <div className="empty-routes"><div className="empty-icon" aria-hidden="true">⌁</div><strong>Nu există rute planificate</strong><p>Rutele pentru această zi vor apărea aici după planificare.</p></div>
               : <div className="route-list">{routes.map((route, index) => {
+                const dropCheck = draggedOrder ? routeAdditionCheck(draggedOrder, route) : null
                 const editing = draftOrder?.routeId === route.id
                 const canReorder = route.stops.length > 1 && route.stops.every(stop => stop.deliveryStatus === 'Pending')
                 const savedStops = [...route.stops].sort((a, b) => a.sequence - b.sequence)
@@ -552,8 +589,22 @@ function App() {
                   : savedStops
                 const changed = editing && orderedStops.some((stop, position) => stop.id !== savedStops[position]?.id)
                 const destinationRoutes = routes.filter(candidate => candidate.id !== route.id && candidate.date === day)
-                return <article className={`route-card${selectedRoute?.id === route.id ? ' is-selected' : ''}`} key={route.id}>
+                return <article className={`route-card${selectedRoute?.id === route.id ? ' is-selected' : ''}${dropCheck ? dropCheck.accepted ? ' is-drop-compatible' : ' is-drop-incompatible' : ''}${dropCheck && hoveredRouteId === route.id ? ' is-drop-hovered' : ''}`}
+                  key={route.id}
+                  onDragOver={event => {
+                    if (!draggedOrder || busy || loading) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = dropCheck?.accepted ? 'copy' : 'none'
+                    if (hoveredRouteId !== route.id) setHoveredRouteId(route.id)
+                  }}
+                  onDragLeave={event => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setHoveredRouteId(null)
+                  }}
+                  onDrop={event => handleDropOrder(event, route)}>
                 <div className="route-header"><div><span className="route-index">RUTA {String(index + 1).padStart(2, '0')}</span><h3>{route.stops[0]?.zone || 'Rută'}</h3></div><div className="route-header-actions"><span className="stop-count">{route.stops.length} {route.stops.length === 1 ? 'oprire' : 'opriri'}</span><button type="button" className="route-select-button" aria-pressed={selectedRoute?.id === route.id} onClick={() => { setSelectedRouteId(route.id); setStatusError(null) }} disabled={busy}>{selectedRoute?.id === route.id ? 'Pe hartă' : 'Vezi pe hartă'}</button></div></div>
+                {dropCheck && <p className={`route-drop-message${dropCheck.accepted ? ' accepts' : ' rejects'}`}>
+                  {dropCheck.accepted ? 'Poți lăsa comanda aici.' : `Nu acceptă comanda: ${dropCheck.reason}`}
+                </p>}
                 <div className="route-facts"><div><span>VEHICUL</span><strong>{route.vehicle.registrationNumber}</strong></div><div><span>ȘOFER</span><strong>{route.driver.fullName}</strong></div><div><span>VOLUM TOTAL</span><strong>{volumeFormat.format(route.totalVolume)}</strong></div></div>
                 <div className="stops"><div className="stop-order-heading"><p>{editing ? 'ORDINE PROPUSĂ' : 'OPRIRI ÎN ORDINE'}</p>
                   {selectedRoute?.id === route.id && !editing && canReorder &&
