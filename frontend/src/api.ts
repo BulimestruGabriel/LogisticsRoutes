@@ -79,6 +79,16 @@ export async function getRoutePosition(routeId: string, signal?: AbortSignal): P
     { signal })) ?? null
 }
 
+export function reportRoutePosition(routeId: string, token: string, latitude: number, longitude: number,
+  reportedAt: string, signal?: AbortSignal): Promise<RoutePositionResponse> {
+  return request(`/api/routes/${encodeURIComponent(routeId)}/position`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ latitude, longitude, reportedAt, source: 'Reported' }),
+    signal,
+  })
+}
+
 export interface PlanRoutesRequest {
   day: string
 }

@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using LogisticsRoutes.API;
 using LogisticsRoutes.BusinessLayer.Data;
 using LogisticsRoutes.BusinessLayer.Models;
 using LogisticsRoutes.Domain.Entities;
@@ -17,6 +19,23 @@ namespace LogisticsRoutes.Tests;
 public class RoutePositionEndpointTests
 {
     [Fact]
+    public async Task ReportFailsClosedWhenSigningKeyIsMissing()
+    {
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, configuration) =>
+                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:LogisticsDb"] = "Host=localhost;Database=unused",
+                    ["DriverAccess:SigningKey"] = ""
+                })));
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync($"/api/routes/{Guid.NewGuid()}/position",
+            new ReportRoutePositionRequest(47.01, 28.85, DateTimeOffset.UtcNow, "Reported"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
     public async Task ReportValidatesCoordinatesAndRouteAndPersistsOnlyLatestPosition()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -26,7 +45,8 @@ public class RoutePositionEndpointTests
             builder.ConfigureAppConfiguration((_, configuration) =>
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
-                    ["ConnectionStrings:LogisticsDb"] = "Host=localhost;Database=unused"
+                    ["ConnectionStrings:LogisticsDb"] = "Host=localhost;Database=unused",
+                    ["DriverAccess:SigningKey"] = Convert.ToBase64String(Enumerable.Repeat((byte)42, 32).ToArray())
                 }));
             builder.ConfigureTestServices(services =>
             {
@@ -63,6 +83,27 @@ public class RoutePositionEndpointTests
         Assert.Equal(HttpStatusCode.NoContent, (await client.GetAsync(url)).StatusCode);
 
         var moment = DateTimeOffset.UtcNow.AddSeconds(-5);
+        var validReport = new ReportRoutePositionRequest(47.01, 28.85, moment, "Reported");
+        var access = factory.Services.GetRequiredService<RoutePositionAccess>();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(url, validReport)).StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "invalid-token");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(url, validReport)).StatusCode);
+        var signedToken = access.Issue(route.Id, PositionWriteScope.Reported);
+        var signatureStart = signedToken.LastIndexOf('.') + 1;
+        var tamperedToken = signedToken[..signatureStart] + (signedToken[signatureStart] == 'A' ? 'B' : 'A') +
+                            signedToken[(signatureStart + 1)..];
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tamperedToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(url, validReport)).StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            access.Issue(Guid.NewGuid(), PositionWriteScope.Reported));
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(url, validReport)).StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            access.Issue(route.Id, PositionWriteScope.Simulated));
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(url, validReport)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.GetAsync(url)).StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            signedToken);
         foreach (var bad in new[]
                  {
                      new ReportRoutePositionRequest(90.01, 28.85, moment, "Reported"),
@@ -78,22 +119,26 @@ public class RoutePositionEndpointTests
         }
         Assert.Equal(HttpStatusCode.NoContent, (await client.GetAsync(url)).StatusCode);
 
-        var missingUrl = $"/api/routes/{Guid.NewGuid()}/position";
+        var missingRouteId = Guid.NewGuid();
+        var missingUrl = $"/api/routes/{missingRouteId}/position";
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(missingUrl)).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound,
-            (await client.PostAsJsonAsync(missingUrl,
-                new ReportRoutePositionRequest(47.01, 28.85, moment, "Simulated"))).StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            access.Issue(missingRouteId, PositionWriteScope.Reported));
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsJsonAsync(missingUrl, validReport)).StatusCode);
 
-        var first = await client.PostAsJsonAsync(url,
-            new ReportRoutePositionRequest(47.01, 28.85, moment, "Simulated"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            access.Issue(route.Id, PositionWriteScope.Reported));
+        var first = await client.PostAsJsonAsync(url, validReport);
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         var firstPosition = await first.Content.ReadFromJsonAsync<RoutePositionResponse>();
         Assert.NotNull(firstPosition);
-        Assert.Equal("Simulated", firstPosition.Source);
+        Assert.Equal("Reported", firstPosition.Source);
         Assert.Equal(route.Id, firstPosition.RouteId);
         Assert.True(firstPosition.ReceivedAt >= moment);
 
         var newerMoment = moment.AddSeconds(1);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
+            access.Issue(route.Id, PositionWriteScope.Simulated));
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync(url,
             new ReportRoutePositionRequest(47.02, 28.86, newerMoment, "Simulated"))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync(url,

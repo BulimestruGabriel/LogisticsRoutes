@@ -1,10 +1,21 @@
 using System.ComponentModel.DataAnnotations;
+using LogisticsRoutes.API;
 using LogisticsRoutes.BusinessLayer.Data;
 using LogisticsRoutes.BusinessLayer.Models;
 using LogisticsRoutes.BusinessLayer.Services;
 using Microsoft.EntityFrameworkCore;
 
-var builder = WebApplication.CreateBuilder(args);
+var issuingToken = args.Length > 0 && args[0] is "--issue-driver-token" or "--issue-simulator-token";
+var builder = WebApplication.CreateBuilder(issuingToken ? [] : args);
+if (issuingToken)
+{
+    if (args.Length != 2 || !Guid.TryParse(args[1], out var tokenRouteId))
+        throw new ArgumentException("Provide a route ID after --issue-driver-token or --issue-simulator-token.");
+    var access = new RoutePositionAccess(builder.Configuration["DriverAccess:SigningKey"]);
+    var scope = args[0] == "--issue-driver-token" ? PositionWriteScope.Reported : PositionWriteScope.Simulated;
+    Console.WriteLine(access.Issue(tokenRouteId, scope));
+    return;
+}
 
 var connectionString = builder.Configuration.GetConnectionString("LogisticsDb")
     ?? throw new InvalidOperationException("Connection string 'LogisticsDb' is missing.");
@@ -20,6 +31,8 @@ builder.Services.AddScoped<RouteStopStatusService>();
 builder.Services.AddScoped<RouteStopOrderService>();
 builder.Services.AddScoped<RouteStopMoveService>();
 builder.Services.AddScoped<RoutePositionService>();
+builder.Services.AddSingleton(provider => new RoutePositionAccess(
+    provider.GetRequiredService<IConfiguration>()["DriverAccess:SigningKey"]));
 builder.Services.AddSingleton(new PlanningSettings(
     builder.Configuration.GetValue<double?>("Planning:DepotLatitude"),
     builder.Configuration.GetValue<double?>("Planning:DepotLongitude")));
@@ -235,16 +248,34 @@ app.MapGet("/api/routes/{routeId}/position", async (Guid routeId, RoutePositionS
     .Produces(StatusCodes.Status404NotFound);
 
 app.MapPost("/api/routes/{routeId}/position", async (Guid routeId, ReportRoutePositionRequest request,
-        RoutePositionService service, CancellationToken cancellationToken) =>
+        HttpContext context, RoutePositionAccess access, RoutePositionService service,
+        CancellationToken cancellationToken) =>
     {
+        if (!access.IsConfigured)
+            return Results.Problem(detail: "Raportarea poziției nu este configurată pe server.",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        var authorization = context.Request.Headers.Authorization.ToString();
+        if (!authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return Results.Unauthorized();
+        var scope = string.Equals(request.Source?.Trim(), "Simulated", StringComparison.OrdinalIgnoreCase)
+            ? PositionWriteScope.Simulated : PositionWriteScope.Reported;
+        var tokenResult = access.Validate(authorization[7..].Trim(), routeId, scope);
+        if (tokenResult == PositionTokenResult.Invalid)
+            return Results.Unauthorized();
+        if (tokenResult == PositionTokenResult.WrongRouteOrScope)
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+
         var position = await service.ReportAsync(routeId, request, cancellationToken);
         return position is null ? Results.NotFound() : Results.Ok(position);
     })
     .WithTags("Routes")
     .Produces<RoutePositionResponse>()
+    .Produces(StatusCodes.Status401Unauthorized)
+    .Produces(StatusCodes.Status403Forbidden)
     .Produces(StatusCodes.Status404NotFound)
     .ProducesProblem(StatusCodes.Status400BadRequest)
-    .ProducesProblem(StatusCodes.Status409Conflict);
+    .ProducesProblem(StatusCodes.Status409Conflict)
+    .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
 app.Run();
 

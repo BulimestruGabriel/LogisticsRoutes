@@ -66,11 +66,35 @@ Exemplul setează `VITE_OSRM_BASE_URL=http://127.0.0.1:5000`, fără `/route/v1/
 
 Harta păstrează atribuirea OpenStreetMap pentru plăcile afișate. Traseul acoperă numai opririle rutei, fără segmentul de la sau către depozit. Distanța și durata provin din profilul și datele serviciului de rutare; durata este estimativă și nu stabilește ora sosirii. Acoperirea geografică, disponibilitatea și limitele de cereri depind de serviciul configurat. Când acesta lipsește, răspunde cu eroare sau nu găsește drum, harta păstrează marcajele și afișează o linie schematică. Pentru trafic sau utilizare susținută, configurează un serviciu administrat ori o instanță proprie, cu limite potrivite aplicației. Formatul cererii și răspunsului este descris în [documentația OSRM Route](https://project-osrm.org/docs/v5.22.0/api/#route-service).
 
-## Urmărirea poziției vehiculului (prima etapă)
+## Urmărirea poziției vehiculului
 
-După migrarea bazei (`dotnet ef database update --project LogisticsRoutes.BusinessLayer --startup-project LogisticsRoutes.API`), API-ul acceptă `POST /api/routes/{routeId}/position` cu `latitude`, `longitude`, `reportedAt` (ISO 8601 cu fus orar) și `source` (`Reported` sau `Simulated`). `GET` pe aceeași adresă întoarce ultima poziție, `204` dacă ruta există dar nu are raportări și `404` pentru ruta inexistentă. Coordonatele din afara intervalelor latitudine −90…90 și longitudine −180…180, ora lipsă sau cu peste 5 minute în viitor și sursa necunoscută primesc `400`. O raportare mai veche decât ultima salvată primește `409`. Sunt salvate separat momentul raportării și momentul primirii. Raportarea nu schimbă opririle sau comenzile.
+După migrarea bazei (`dotnet ef database update --project LogisticsRoutes.BusinessLayer --startup-project LogisticsRoutes.API`), API-ul acceptă `POST /api/routes/{routeId}/position` cu `latitude`, `longitude`, `reportedAt` (ISO 8601 cu fus orar) și `source` (`Reported` sau `Simulated`). Scrierea cere `Authorization: Bearer <token>`; tokenul este semnat pe server, limitat la ruta din URL și la una dintre sursele `Reported` sau `Simulated`, și expiră după 24 de ore. Fără token sau cu token invalid răspunde `401`, iar cu un token valid pentru altă rută ori sursă răspunde `403`. Fără cheia serverului, scrierea este dezactivată (`503`). `GET` pe aceeași adresă rămâne disponibil Dispecerului și întoarce ultima poziție, `204` dacă ruta există dar nu are raportări și `404` pentru ruta inexistentă. Coordonatele din afara intervalelor latitudine −90…90 și longitudine −180…180, ora lipsă sau cu peste 5 minute în viitor și sursa necunoscută primesc `400`. O raportare mai veche decât ultima salvată primește `409`. Sunt salvate separat momentul raportării și momentul primirii. Raportarea nu schimbă opririle sau comenzile.
 
-Dispecerul citește poziția rutei selectate la fiecare 3 secunde, fără reîncărcarea paginii. Marcajul vehiculului este distinct de opriri. Interfața arată momentul ultimei primiri și marchează datele drept vechi când ora raportării este cu peste 60 de secunde în urmă; arată și absența sau indisponibilitatea poziției. O poziție cu `source: "Simulated"` este etichetată vizibil ca **simulată, nu GPS real**. Sursa `Reported` indică doar o raportare către API; această etapă nu autentifică dispozitivul și nu oferă ETA sau urmărire GPS verificată.
+Dispecerul citește poziția rutei selectate la fiecare 3 secunde, fără reîncărcarea paginii. Marcajul vehiculului este distinct de opriri. Interfața arată momentul ultimei primiri și marchează datele drept vechi când ora raportării este cu peste 60 de secunde în urmă; arată și absența sau indisponibilitatea poziției. O poziție cu `source: "Simulated"` este etichetată vizibil ca **simulată, nu GPS real**. Sursa `Reported` indică o raportare autorizată pentru acea rută; nu dovedește că dispozitivul sau coordonatele sunt autentice și nu oferă ETA.
+
+Generează o cheie aleatoare pentru semnarea tokenurilor și păstreaz-o numai pe server. În dezvoltare, [User Secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets) o păstrează în afara repository-ului; repornește API-ul după configurare:
+
+```powershell
+$keyBytes = New-Object byte[] 32
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($keyBytes)
+$rng.Dispose()
+$signingKey = [Convert]::ToBase64String($keyBytes)
+dotnet user-secrets set 'DriverAccess:SigningKey' $signingKey --project LogisticsRoutes.API
+```
+
+În alte medii, setează `DriverAccess__SigningKey` în mediul procesului API la aceeași valoare Base64 (minimum 32 de octeți aleatori). O schimbare a cheii invalidează toate tokenurile emise anterior. Emite un cod separat pentru fiecare rută, dintr-un terminal local, cu API-ul deja compilat:
+
+```powershell
+dotnet run --no-build --project LogisticsRoutes.API --launch-profile http -- --issue-driver-token '<ID-ul-rutei>'
+```
+
+Codul afișat este valabil 24 de ore numai pentru poziții `Reported` pe acea rută. Transmite-l privat șoferului; URL-ul paginii conține numai ID-ul rutei, iar codul este introdus în pagină și păstrat doar în memoria ei. Pentru simulator emite un cod separat, limitat la `Simulated`:
+
+```powershell
+dotnet run --no-build --project LogisticsRoutes.API --launch-profile http -- --issue-simulator-token '<ID-ul-rutei>'
+$env:SIMULATOR_ROUTE_TOKEN = '<codul de simulator afișat>'
+```
 
 Pentru a vedea marcajul mișcându-se pe străzi în dezvoltare, pornește API-ul, frontendul și OSRM local, apoi alege o rută de test cu minimum două opriri. Copiază ID-ul rutei din `GET http://localhost:5212/api/routes?day=YYYY-MM-DD` și rulează din rădăcina repository-ului:
 
@@ -78,7 +102,40 @@ Pentru a vedea marcajul mișcându-se pe străzi în dezvoltare, pornește API-u
 ./scripts/dev/simulate-route-position.ps1 -RouteId '<ID-ul-rutei>' -IntervalSeconds 2
 ```
 
-Simulatorul acceptă numai API și OSRM locale (`localhost` sau `127.0.0.1`). Cere de la OSRM geometria rutieră a opririlor în ordinea `Sequence`, exact ca harta, și trimite poziții `Simulated` la distanțe egale de-a lungul acesteia, la intervalul ales. Pentru închiderea ciclului, marcajul revine pe aceeași linie rutieră, în sens invers. Repetă ciclul până la `Ctrl+C`; `-Cycles 1` execută un singur ciclu. Pentru alte porturi locale folosește `-ApiBaseUrl 'http://127.0.0.1:<port>'` și/sau `-OsrmBaseUrl 'http://127.0.0.1:<port>'`. `-StepsPerLeg` stabilește numărul de raportări pentru fiecare oprire din ciclu. Dacă OSRM nu răspunde sau nu găsește traseu, simulatorul afișează motivul și trece explicit la **FALLBACK LINIE DREAPTĂ**, cu interpolarea inițială între opriri. Pozițiile rămân artificiale și nu reprezintă poziția reală a vehiculului. Simulatorul nu trimite coordonatele comenzilor către un serviciu public.
+Simulatorul cere `SIMULATOR_ROUTE_TOKEN` (sau parametrul `-AccessToken`) și acceptă numai API și OSRM locale (`localhost` sau `127.0.0.1`). Cere de la OSRM geometria rutieră a opririlor în ordinea `Sequence`, exact ca harta, și trimite poziții `Simulated` la distanțe egale de-a lungul acesteia, la intervalul ales. Pentru închiderea ciclului, marcajul revine pe aceeași linie rutieră, în sens invers. Repetă ciclul până la `Ctrl+C`; `-Cycles 1` execută un singur ciclu. Pentru alte porturi locale folosește `-ApiBaseUrl 'http://127.0.0.1:<port>'` și/sau `-OsrmBaseUrl 'http://127.0.0.1:<port>'`. `-StepsPerLeg` stabilește numărul de raportări pentru fiecare oprire din ciclu. Dacă OSRM nu răspunde sau nu găsește traseu, simulatorul afișează motivul și trece explicit la **FALLBACK LINIE DREAPTĂ**, cu interpolarea inițială între opriri. Pozițiile rămân artificiale și nu reprezintă poziția reală a vehiculului. Simulatorul nu trimite coordonatele comenzilor către un serviciu public.
+
+### Test pe telefon, prin HTTPS local
+
+Pagina șoferului este la `/driver/<ID-ul-rutei>`. Pentru un test pe telefon, ține API-ul pornit pe calculator la `localhost:5212`, pe aceeași rețea privată cu telefonul, și construiește frontendul cu `npm.cmd --prefix frontend run build`. [Geolocation cere un context HTTPS de încredere](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation/watchPosition); accesarea adresei HTTP cu IP-ul calculatorului nu este suficientă. [Instalează Caddy](https://caddyserver.com/docs/install) și folosește [certificatul său local](https://caddyserver.com/docs/automatic-https#local-https) pentru pagină și pentru numai cele două cereri API necesare șoferului:
+
+```caddyfile
+https://192.168.1.50 {
+    tls internal
+    root * "C:/cale/catre/LogisticsRoutes/frontend/dist"
+
+    @routeRead {
+        method GET
+        path /api/routes/ROUTE_ID
+    }
+    @positionWrite {
+        method POST
+        path /api/routes/ROUTE_ID/position
+    }
+    @otherApi path /api/*
+
+    route {
+        reverse_proxy @routeRead 127.0.0.1:5212
+        reverse_proxy @positionWrite 127.0.0.1:5212
+        respond @otherApi 404
+        try_files {path} /index.html
+        file_server
+    }
+}
+```
+
+Înlocuiește IP-ul, `ROUTE_ID` și calea absolută către `frontend/dist`, salvează blocul într-un `Caddyfile` local și rulează `caddy run --config Caddyfile`. Configurația permite din LAN doar citirea rutei alese și raportarea poziției pentru ea; API-ul Dispecerului rămâne la `localhost`. Pe Windows, certificatul CA de instalat pe telefon este de obicei la `$env:APPDATA\Caddy\pki\authorities\local\root.crt`; [Caddy documentează directorul de date](https://caddyserver.com/docs/conventions#data-directory) și [cerința de încredere pentru alte dispozitive](https://caddyserver.com/docs/running). Deschide `https://<IP-LAN>/driver/<ID-ul-rutei>` numai după ce browserul acceptă certificatul fără avertisment. Permite în firewall accesul la portul 443 doar din rețeaua privată și nu configura redirecționare de porturi sau tunel public. Caddy este singura intrare din LAN.
+
+Lipește codul `--issue-driver-token` în pagină și apasă **Pornește partajarea poziției**. Abia atunci browserul cere permisiunea; pagina arată starea ei, semnalul GPS și ora ultimei raportări. Trimite cel mult o raportare la 3 secunde. **Oprește** dezactivează urmărirea și oprește cererile noi; o cerere deja primită de server poate rămâne salvată. Dacă permisiunea este refuzată, activeaz-o din setările browserului; dacă lipsește semnalul, pagina rămâne în așteptare și indică problema. Ține pagina deschisă: această primă versiune nu raportează în fundal după închiderea sau suspendarea ei. Verifică în Dispecer apariția poziției `Reported` pentru aceeași rută.
 
 ## Planificarea rutelor
 

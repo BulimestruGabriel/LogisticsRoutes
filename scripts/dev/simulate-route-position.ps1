@@ -2,12 +2,17 @@
     [Parameter(Mandatory = $true)][Guid]$RouteId,
     [string]$ApiBaseUrl = 'http://localhost:5212',
     [string]$OsrmBaseUrl = 'http://127.0.0.1:5000',
+    [string]$AccessToken = $env:SIMULATOR_ROUTE_TOKEN,
     [ValidateRange(1, 60)][int]$IntervalSeconds = 2,
     [ValidateRange(1, 100)][int]$StepsPerLeg = 5,
     [ValidateRange(0, 10000)][int]$Cycles = 0
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($AccessToken)) {
+    throw 'Setează SIMULATOR_ROUTE_TOKEN la un token de simulator emis pentru această rută.'
+}
+$postHeaders = @{ Authorization = "Bearer $AccessToken" }
 foreach ($baseUrl in @($ApiBaseUrl, $OsrmBaseUrl)) {
     $uri = $null
     if (-not [Uri]::TryCreate($baseUrl, [UriKind]::Absolute, [ref]$uri) -or
@@ -154,7 +159,7 @@ while ($Cycles -eq 0 -or $cycle -lt $Cycles) {
             source = 'Simulated'
         } | ConvertTo-Json -Compress
 
-        $position = Invoke-RestMethod -Method Post -Uri "$endpoint/position" -ContentType 'application/json' -Body $body
+        $position = Invoke-RestMethod -Method Post -Uri "$endpoint/position" -Headers $postHeaders -ContentType 'application/json' -Body $body
         Write-Host ("SIMULAT {0}: {1:N5}, {2:N5}" -f $position.reportedAt, $position.latitude, $position.longitude)
         if ($sample -lt $samplesPerCycle - 1 -or $Cycles -eq 0 -or $cycle -lt $Cycles - 1) {
             Start-Sleep -Seconds $IntervalSeconds
