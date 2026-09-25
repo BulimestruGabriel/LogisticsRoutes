@@ -72,13 +72,13 @@ După migrarea bazei (`dotnet ef database update --project LogisticsRoutes.Busin
 
 Dispecerul citește poziția rutei selectate la fiecare 3 secunde, fără reîncărcarea paginii. Marcajul vehiculului este distinct de opriri. Interfața arată momentul ultimei primiri și marchează datele drept vechi când ora raportării este cu peste 60 de secunde în urmă; arată și absența sau indisponibilitatea poziției. O poziție cu `source: "Simulated"` este etichetată vizibil ca **simulată, nu GPS real**. Sursa `Reported` indică doar o raportare către API; această etapă nu autentifică dispozitivul și nu oferă ETA sau urmărire GPS verificată.
 
-Pentru a vedea marcajul mișcându-se în dezvoltare, pornește API-ul și frontendul local, apoi alege o rută de test cu minimum două opriri. Copiază ID-ul rutei din `GET http://localhost:5212/api/routes?day=YYYY-MM-DD` și rulează din rădăcina repository-ului:
+Pentru a vedea marcajul mișcându-se pe străzi în dezvoltare, pornește API-ul, frontendul și OSRM local, apoi alege o rută de test cu minimum două opriri. Copiază ID-ul rutei din `GET http://localhost:5212/api/routes?day=YYYY-MM-DD` și rulează din rădăcina repository-ului:
 
 ```powershell
 ./scripts/dev/simulate-route-position.ps1 -RouteId '<ID-ul-rutei>' -IntervalSeconds 2
 ```
 
-Simulatorul acceptă numai API local (`localhost` sau `127.0.0.1`), interpolează coordonatele opririlor și repetă traseul până la `Ctrl+C`. Pentru o singură trecere folosește `-Cycles 1`; pentru alt port local adaugă `-ApiBaseUrl 'http://127.0.0.1:<port>'`. Pozițiile sunt artificiale, între opriri în linie dreaptă, și nu reprezintă poziția reală a vehiculului. Nu trimite coordonatele comenzilor către un serviciu public din acest simulator.
+Simulatorul acceptă numai API și OSRM locale (`localhost` sau `127.0.0.1`). Cere de la OSRM geometria rutieră a opririlor în ordinea `Sequence`, exact ca harta, și trimite poziții `Simulated` la distanțe egale de-a lungul acesteia, la intervalul ales. Pentru închiderea ciclului, marcajul revine pe aceeași linie rutieră, în sens invers. Repetă ciclul până la `Ctrl+C`; `-Cycles 1` execută un singur ciclu. Pentru alte porturi locale folosește `-ApiBaseUrl 'http://127.0.0.1:<port>'` și/sau `-OsrmBaseUrl 'http://127.0.0.1:<port>'`. `-StepsPerLeg` stabilește numărul de raportări pentru fiecare oprire din ciclu. Dacă OSRM nu răspunde sau nu găsește traseu, simulatorul afișează motivul și trece explicit la **FALLBACK LINIE DREAPTĂ**, cu interpolarea inițială între opriri. Pozițiile rămân artificiale și nu reprezintă poziția reală a vehiculului. Simulatorul nu trimite coordonatele comenzilor către un serviciu public.
 
 ## Planificarea rutelor
 
