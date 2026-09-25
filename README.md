@@ -31,6 +31,41 @@ npm.cmd run dev
 
 Deschide adresa afișată de Vite (implicit `http://localhost:5173`). Cererile `/api` sunt trimise prin proxy către API-ul local. Dacă API-ul rulează pe altă adresă, setează `API_PROXY_TARGET` în terminalul frontendului înainte de `npm.cmd run dev`, de exemplu `$env:API_PROXY_TARGET = 'http://localhost:5212'`. Frontendul folosește numai datele returnate de API.
 
+## Traseu rutier pe hartă
+
+Proiectul are un serviciu OSRM local separat de PostgreSQL în `compose.osrm.yaml`. Folosește extractul [OpenStreetMap Moldova de la Geofabrik](https://download.geofabrik.de/europe/moldova.html) și profilul auto OSRM. Din rădăcina repository-ului, pregătește datele o singură dată (sau repetă pașii după o actualizare a extractului):
+
+```powershell
+New-Item -ItemType Directory -Force data/osrm | Out-Null
+curl.exe --fail --location --retry 3 --continue-at - --output data/osrm/moldova-latest.osm.pbf https://download.geofabrik.de/europe/moldova-latest.osm.pbf
+curl.exe --fail --location --retry 3 --output data/osrm/moldova-latest.osm.pbf.md5 https://download.geofabrik.de/europe/moldova-latest.osm.pbf.md5
+$expected = (Get-Content data/osrm/moldova-latest.osm.pbf.md5 -Raw).Trim().Split(' ')[0].ToLowerInvariant()
+$actual = (Get-FileHash data/osrm/moldova-latest.osm.pbf -Algorithm MD5).Hash.ToLowerInvariant()
+if ($actual -ne $expected) { throw 'Extractul Moldova nu corespunde sumei MD5 publicate.' }
+
+$osrmData = (Resolve-Path data/osrm).Path
+$osrmImage = 'ghcr.io/project-osrm/osrm-backend@sha256:8a1b1bc938412f15f9b5b32d794c4ec6bf4a85dfbbabfa0a014b70b187edb53b'
+docker pull $osrmImage
+docker run --rm --mount "type=bind,source=$osrmData,target=/data" $osrmImage osrm-extract -p /opt/car.lua /data/moldova-latest.osm.pbf
+docker run --rm --mount "type=bind,source=$osrmData,target=/data" $osrmImage osrm-partition /data/moldova-latest.osrm
+docker run --rm --mount "type=bind,source=$osrmData,target=/data" $osrmImage osrm-customize /data/moldova-latest.osrm
+docker compose -f compose.osrm.yaml up -d --wait
+```
+
+Pregătirea folosește pașii [recomandați de OSRM](https://github.com/Project-OSRM/osrm-backend#using-docker) pentru algoritmul MLD. Fișierul `.osm.pbf` și fișierele `.osrm.*` rămân în `data/osrm`, ignorat de Git. Când actualizezi extractul, oprește mai întâi OSRM (`docker compose -f compose.osrm.yaml stop osrm`), refă cei trei pași de pregătire și pornește-l cu `docker compose -f compose.osrm.yaml start osrm`. Compose-ul OSRM folosește un proiect Docker separat și portul local `127.0.0.1:5000`; nu modifică serviciul PostgreSQL din `compose.yaml`.
+
+Configurează frontendul să folosească serviciul local:
+
+```powershell
+Copy-Item frontend/.env.example frontend/.env.local
+cd frontend
+npm.cmd run dev
+```
+
+Exemplul setează `VITE_OSRM_BASE_URL=http://127.0.0.1:5000`, fără `/route/v1/driving`. Frontendul cere ruta prin API-ul OSRM Route cu coordonatele `longitudine,latitudine` în ordinea opririlor, `overview=full&geometries=geojson&steps=false`. Nu folosește serviciul Trip, deci nu optimizează ordinea. Adresa este inclusă în codul frontend la build; seteaz-o înainte de `npm.cmd run build` pentru distribuție. Serviciul trebuie să fie accesibil din browser și să permită CORS pentru originea frontendului; o pagină HTTPS necesită și un serviciu HTTPS.
+
+Harta păstrează atribuirea OpenStreetMap pentru plăcile afișate. Traseul acoperă numai opririle rutei, fără segmentul de la sau către depozit. Distanța și durata provin din profilul și datele serviciului de rutare; durata este estimativă și nu stabilește ora sosirii. Acoperirea geografică, disponibilitatea și limitele de cereri depind de serviciul configurat. Când acesta lipsește, răspunde cu eroare sau nu găsește drum, harta păstrează marcajele și afișează o linie schematică. Pentru trafic sau utilizare susținută, configurează un serviciu administrat ori o instanță proprie, cu limite potrivite aplicației. Formatul cererii și răspunsului este descris în [documentația OSRM Route](https://project-osrm.org/docs/v5.22.0/api/#route-service).
+
 ## Planificarea rutelor
 
 Înainte de `POST /api/routes/plan`, configurează coordonatele **depozitului tău** prin `Planning:DepotLatitude` și `Planning:DepotLongitude`. Nu există coordonate implicite.

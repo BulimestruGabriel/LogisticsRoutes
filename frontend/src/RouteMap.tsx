@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { divIcon, latLngBounds, type LatLngTuple } from 'leaflet'
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
 import type { RouteResponse, RouteStopResponse } from './api'
 import { deliveryLabels, numberFormat } from './format'
+import { loadRoadRoute, type RoadRoute } from './routing'
 import 'leaflet/dist/leaflet.css'
 
 interface MappedStop {
@@ -56,6 +57,27 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
     return { validStops, invalidStops }
   }, [route.stops])
   const positions = useMemo(() => validStops.map(item => item.position), [validStops])
+  const routeKey = `${route.id}|${validStops.map(({ stop }) =>
+    `${stop.id}:${stop.sequence}:${stop.latitude}:${stop.longitude}`).join('|')}`
+  const routingBaseUrl = import.meta.env.VITE_OSRM_BASE_URL?.trim() ?? ''
+  const [routing, setRouting] = useState<{ key: string; road: RoadRoute | null } | null>(null)
+  const road = routing?.key === routeKey ? routing.road : null
+  const routeLoading = positions.length > 1 && !!routingBaseUrl && routing?.key !== routeKey
+
+  useEffect(() => {
+    if (positions.length < 2) return
+    const controller = new AbortController()
+    loadRoadRoute(routingBaseUrl, positions, controller.signal)
+      .then(result => {
+        if (!controller.signal.aborted) setRouting({ key: routeKey, road: result })
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRouting({ key: routeKey, road: null })
+      })
+    return () => controller.abort()
+  }, [routeKey, routingBaseUrl, positions])
+
+  const linePositions = road?.positions ?? positions
 
   return (
     <>
@@ -76,8 +98,11 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
               url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             />
-            <FitSelectedRoute positions={positions} />
-            {positions.length > 1 && <Polyline positions={positions} pathOptions={{ color: '#527c32', weight: 3, opacity: 0.85 }} />}
+            <FitSelectedRoute positions={linePositions} />
+            {positions.length > 1 && <Polyline key={`${routeKey}:${road ? 'road' : 'schematic'}`}
+              positions={linePositions}
+              pathOptions={{ color: '#527c32', weight: 3, opacity: 0.85,
+                dashArray: road ? undefined : '7 7' }} />}
             {validStops.map(({ stop, position }) => <Marker key={stop.id} position={position} icon={numberedIcon(stop.sequence)}>
               <Popup>
                 <div className="stop-popup">
@@ -91,9 +116,17 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
           </MapContainer>
         </div>
         {positions.length > 1
-          ? <p className="map-legend"><span className="legend-line" aria-hidden="true" /><span>
-            <strong>Linie schematică:</strong> legătură directă între coordonatele opririlor afișate, nu traseu calculat pe străzi.
-          </span></p>
+          ? road
+            ? <p className="map-legend"><span className="legend-line" aria-hidden="true" /><span>
+              <strong>Traseu rutier estimat.</strong>
+              {road.distanceMeters !== null && ` Distanță: ${numberFormat.format(road.distanceMeters / 1000)} km.`}
+              {road.durationSeconds !== null && ` Durată estimată de condus: ${numberFormat.format(road.durationSeconds / 60)} min.`}
+              {' '}Durata nu este o oră estimată de sosire.
+            </span></p>
+            : <p className="map-legend"><span className="legend-line schematic" aria-hidden="true" /><span>
+              {routeLoading ? 'Se calculează traseul rutier… ' : 'Traseul rutier nu este disponibil. '}
+              Linia schematică unește direct opririle afișate.
+            </span></p>
           : <p className="map-legend">O singură oprire: nu există linie de legătură.</p>}
       </>}
     </>

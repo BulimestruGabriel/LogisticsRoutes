@@ -96,6 +96,7 @@ h3{margin:5px 0 0;font-size:17px;letter-spacing:-.025em}
 .map-legend{display:flex;align-items:center;gap:6px;margin:14px 24px 22px;color:#65746a;font-size:12px;line-height:1.5}
 .map-legend strong{color:#40583a}
 .legend-line{flex:0 0 22px;border-top:3px solid #527c32}
+.legend-line.schematic{border-top-style:dashed}
 .map-warning{margin:20px 24px 0;padding:12px 14px;border:1px solid #efd6ac;border-radius:8px;background:#fff8e9;color:#775825;font-size:12px;line-height:1.55}
 .map-unavailable{margin:24px;color:#7c8982;font-size:14px}
 @media(max-width:600px){.route-header{align-items:flex-start;gap:8px}.route-header-actions{flex-direction:column;align-items:flex-end;gap:6px}.map-frame{margin:15px 15px 0}.route-map{height:320px}.map-warning{margin:15px 15px 0}.map-legend{align-items:flex-start;margin:12px 15px 18px}.legend-line{margin-top:7px}}
