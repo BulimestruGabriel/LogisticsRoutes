@@ -4,7 +4,6 @@ using LogisticsRoutes.BusinessLayer.Data;
 using LogisticsRoutes.BusinessLayer.Models;
 using LogisticsRoutes.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 namespace LogisticsRoutes.BusinessLayer.Services;
 
@@ -83,17 +82,9 @@ public class RouteOrderService(LogisticsDbContext db, PlanningSettings settings)
             await transaction.CommitAsync(cancellationToken);
             return await new RouteQueryService(db).GetByIdAsync(route.Id, cancellationToken);
         }
-        catch (PostgresException exception) when (IsConcurrentConflict(exception))
-        {
-            throw new RouteOrderConflictException("Ruta sau comanda a fost modificată între timp. Reîncarcă datele și încearcă din nou.");
-        }
-        catch (DbUpdateException exception) when (exception.InnerException is PostgresException postgres &&
-                                                  IsConcurrentConflict(postgres))
+        catch (Exception exception) when (DatabaseConflict.IsConcurrent(exception))
         {
             throw new RouteOrderConflictException("Ruta sau comanda a fost modificată între timp. Reîncarcă datele și încearcă din nou.");
         }
     }
-
-    private static bool IsConcurrentConflict(PostgresException exception) =>
-        exception.SqlState is PostgresErrorCodes.SerializationFailure or PostgresErrorCodes.UniqueViolation;
 }

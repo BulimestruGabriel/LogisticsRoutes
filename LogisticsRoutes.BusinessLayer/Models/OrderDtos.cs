@@ -16,4 +16,22 @@ public record OrderResponse(
     double Longitude,
     decimal Volume,
     DateOnly DeliveryDate,
-    string Status);
+    string Status,
+    Guid? SourceOrderId);
+
+public record UpdateOrderVolumeRequest(decimal Volume);
+
+public record CorrectConfirmedVolumeRequest(decimal Volume, decimal ExpectedVolume);
+
+public record CopyYesterdayRequest(DateOnly Day, List<Guid>? SourceOrderIds);
+
+public record CopyYesterdayCandidate(
+    OrderResponse SourceOrder,
+    string? DeliveryStatus,
+    bool WarnDeliveryOutcome,
+    Guid? AlreadyCopiedOrderId,
+    List<OrderResponse> PossibleExistingToday);
+
+public record CopyYesterdayPreview(DateOnly Day, DateOnly SourceDay, List<CopyYesterdayCandidate> Candidates);
+
+public record CopyYesterdayResult(DateOnly Day, List<OrderResponse> Created, List<OrderResponse> AlreadyCopied);

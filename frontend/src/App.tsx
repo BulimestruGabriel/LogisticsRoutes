@@ -3,26 +3,36 @@ import {
   ApiError,
   addOrderToRoute,
   confirmOrder,
+  correctConfirmedVolume,
   createOrder,
   getOrders,
+  getVehicles,
+  getDrivers,
   getRoute,
   getRoutes,
   moveRouteStop,
-  planRoutes,
+  planRemaining,
   saveRouteStopOrder,
   updateRouteStopStatus,
+  updateOrderVolume,
   type DeliveryStatus,
   type CreateOrderRequest,
   type OrderResponse,
   type OrderStatus,
+  type VehicleResponse,
+  type DriverResponse,
   type RouteResponse,
 } from './api'
 import { deliveryLabels, volumeFormat } from './format'
 import { startDayRefresh } from './dayRefresh'
 import NewOrderForm from './NewOrderForm'
+import NewOrderVolume from './NewOrderVolume'
+import ConfirmedVolumeCorrection from './ConfirmedVolumeCorrection'
+import CopyYesterdayPanel from './CopyYesterdayPanel'
 import ResourceManagement from './ResourceManagement'
 import RouteMap from './RouteMap'
 import { routeAdditionCheck } from './routeAddition'
+import { orderPlanability } from './remainingPlanning'
 import { additionPreview, capacityUsage } from './routeIndicators'
 import { routeProgress } from './routeProgress'
 
@@ -84,6 +94,7 @@ function stopStatusErrorMessage(error: unknown): string {
 
 function confirmErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.status === 409) return `Confirmarea a fost refuzată (409): ${error.message}`
     if (error.status === 400) return 'Doar o comandă nouă poate fi confirmată. Lista se reîncarcă.'
     if (error.status === 404) return 'Comanda nu mai există. Lista se reîncarcă.'
     return `Confirmarea a eșuat (eroarea ${error.status}). Încearcă din nou.`
@@ -128,11 +139,18 @@ function App() {
   const [day, setDay] = useState(todayLocal)
   const [orders, setOrders] = useState<OrderResponse[]>([])
   const [routes, setRoutes] = useState<RouteResponse[]>([])
+  const [vehicles, setVehicles] = useState<VehicleResponse[] | null>(null)
+  const [drivers, setDrivers] = useState<DriverResponse[] | null>(null)
+  const [fleetError, setFleetError] = useState(false)
+  const [fleetReload, setFleetReload] = useState(0)
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [planning, setPlanning] = useState(false)
   const [creatingOrder, setCreatingOrder] = useState(false)
   const [confirmingOrderId, setConfirmingOrderId] = useState<string | null>(null)
+  const [updatingVolumeId, setUpdatingVolumeId] = useState<string | null>(null)
+  const [volumeDrafts, setVolumeDrafts] = useState<Record<string, string>>({})
+  const [copyingYesterday, setCopyingYesterday] = useState(false)
   const [addingOrderId, setAddingOrderId] = useState<string | null>(null)
   const [routeForOrder, setRouteForOrder] = useState<Record<string, string>>({})
   const [dragOrderId, setDragOrderId] = useState<string | null>(null)
@@ -147,6 +165,7 @@ function App() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [confirmedVolumeError, setConfirmedVolumeError] = useState<string | null>(null)
   const [routeOrderError, setRouteOrderError] = useState<string | null>(null)
   const [stopOrderError, setStopOrderError] = useState<string | null>(null)
   const [draftOrder, setDraftOrder] = useState<{ routeId: string; stopIds: string[] } | null>(null)
@@ -188,21 +207,47 @@ function App() {
     return refresh.stop
   }, [day, reload])
 
-  async function handlePlan() {
+  useEffect(() => {
+    const controller = new AbortController()
+    let inFlight = false
+    async function refreshFleet() {
+      if (inFlight) return
+      inFlight = true
+      try {
+        const [nextVehicles, nextDrivers] = await Promise.all([
+          getVehicles(controller.signal), getDrivers(controller.signal),
+        ])
+        if (!controller.signal.aborted) {
+          setVehicles(nextVehicles)
+          setDrivers(nextDrivers)
+          setFleetError(false)
+        }
+      } catch {
+        if (!controller.signal.aborted) setFleetError(true)
+      } finally {
+        inFlight = false
+      }
+    }
+    void refreshFleet()
+    const timer = window.setInterval(() => { void refreshFleet() }, 30_000)
+    return () => { controller.abort(); window.clearInterval(timer) }
+  }, [fleetReload])
+
+  async function handlePlan(orderIds?: string[]) {
     if (mutationInFlight.current) return
     mutationInFlight.current = true
     setPlanning(true)
     setActionError(null)
     setNotice(null)
     try {
-      const result = await planRoutes(day)
-      setNotice(result.routes.length === 0
-        ? 'Nu există comenzi confirmate pentru această zi. Nu s-a creat nicio rută.'
-        : `${result.routes.length} ${result.routes.length === 1 ? 'rută creată' : 'rute create'}.`)
+      const selectedIds = orderIds ?? planableOrders.map(order => order.id)
+      const result = await planRemaining(day, selectedIds)
+      const addedCount = result.extendedRoutes.reduce((sum, route) => sum + route.addedStops.length, 0)
+      setNotice(`${result.createdRoutes.length} ${result.createdRoutes.length === 1 ? 'rută nouă creată' : 'rute noi create'}; ${addedCount} ${addedCount === 1 ? 'comandă adăugată' : 'comenzi adăugate'} la rutele existente.`)
       setReload(value => value + 1)
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        setActionError(`Conflict (409): ${error.message} Verifică rutele și comenzile actualizate mai jos.`)
+        setActionError(`Planificarea a fost respinsă (409): ${error.message} Verifică rutele și comenzile actualizate mai jos.`)
         setReload(value => value + 1)
       } else {
         setActionError(errorMessage(error))
@@ -260,6 +305,7 @@ function App() {
         lastSuccessfulDay.current = null
         setLastUpdatedAt(null)
         setRefreshError(false)
+        setConfirmedVolumeError(null)
       }
       setNotice('Comanda a fost salvată. O poți confirma din lista comenzilor.')
       return created
@@ -274,6 +320,7 @@ function App() {
     mutationInFlight.current = true
     setConfirmingOrderId(id)
     setConfirmError(null)
+    setConfirmedVolumeError(null)
     setNotice(null)
     try {
       await confirmOrder(id)
@@ -282,12 +329,55 @@ function App() {
       setReload(value => value + 1)
     } catch (error) {
       setConfirmError(confirmErrorMessage(error))
-      if (error instanceof ApiError && (error.status === 400 || error.status === 404)) {
+      if (error instanceof ApiError && (error.status === 400 || error.status === 404 || error.status === 409)) {
         setLoading(true)
         setReload(value => value + 1)
+        setFleetReload(value => value + 1)
       }
     } finally {
       setConfirmingOrderId(null)
+      mutationInFlight.current = false
+    }
+  }
+
+  async function handleUpdateVolume(id: string, volume: number) {
+    if (mutationInFlight.current) throw new Error('O altă operație este în curs.')
+    mutationInFlight.current = true
+    setUpdatingVolumeId(id)
+    try {
+      const updated = await updateOrderVolume(id, volume)
+      setOrders(current => current.map(order => order.id === id ? updated : order))
+      setVolumeDrafts(current => { const next = { ...current }; delete next[id]; return next })
+      setNotice('Volumul a fost salvat. Poți confirma comanda.')
+      setReload(value => value + 1)
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409))
+        setReload(value => value + 1)
+      throw new Error(errorMessage(error))
+    } finally {
+      setUpdatingVolumeId(null)
+      mutationInFlight.current = false
+    }
+  }
+
+  async function handleCorrectConfirmedVolume(id: string, volume: number, expectedVolume: number) {
+    if (mutationInFlight.current) throw new Error('O altă operație este în curs.')
+    mutationInFlight.current = true
+    setUpdatingVolumeId(id)
+    setNotice(null)
+    setConfirmedVolumeError(null)
+    try {
+      const updated = await correctConfirmedVolume(id, volume, expectedVolume)
+      setOrders(current => current.map(order => order.id === id ? updated : order))
+      setNotice('Volumul comenzii confirmate a fost corectat. Acum o poți planifica.')
+      setReload(value => value + 1)
+    } catch (error) {
+      setConfirmedVolumeError(errorMessage(error))
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409))
+        setReload(value => value + 1)
+      throw new Error(errorMessage(error))
+    } finally {
+      setUpdatingVolumeId(null)
       mutationInFlight.current = false
     }
   }
@@ -422,24 +512,31 @@ function App() {
     setActionError(null)
     setStatusError(null)
     setConfirmError(null)
+    setConfirmedVolumeError(null)
     setRouteOrderError(null)
     setStopOrderError(null)
     setDraftOrder(null)
     setMoveError(null)
     setMoveDraft(null)
     setRouteForOrder({})
+    setVolumeDrafts({})
     setDragOrderId(null)
     setHoveredRouteId(null)
     setNotice(null)
   }
 
-  const confirmedCount = orders.filter(order => order.status === 'Confirmed').length
+  const confirmedOrders = orders.filter(order => order.status === 'Confirmed')
+  const planabilityByOrder = new Map(confirmedOrders.map(order =>
+    [order.id, orderPlanability(order, routes, vehicles, drivers)]))
+  const planableOrders = confirmedOrders.filter(order => planabilityByOrder.get(order.id)?.actionable)
+  const blockedOrders = confirmedOrders.filter(order => !planabilityByOrder.get(order.id)?.actionable)
+  const maxVehicleCapacity = vehicles === null ? null : Math.max(0, ...vehicles.map(vehicle => vehicle.capacity))
   const stopCount = routes.reduce((sum, route) => sum + route.stops.length, 0)
   const selectedRoute = routes.find(route => route.id === selectedRouteId) ?? routes[0]
   const draggedOrder = orders.find(order => order.id === dragOrderId && order.status === 'Confirmed')
   const selectedProgress = selectedRoute ? routeProgress(selectedRoute.stops) : null
   const selectedCapacity = selectedRoute ? capacityUsage(selectedRoute) : null
-  const busy = planning || creatingOrder || confirmingOrderId !== null ||
+  const busy = planning || creatingOrder || confirmingOrderId !== null || updatingVolumeId !== null || copyingYesterday ||
     updatingStop !== null || addingOrderId !== null || savingStopOrder || draftOrder !== null ||
     movingStop || moveDraft !== null
 
@@ -470,9 +567,10 @@ function App() {
             <span className="toolbar-date">{readableDay(day)}</span>
             <span className="toolbar-note">Comenzi și rute în această zi</span>
           </div>
-          <button className="primary-button" type="button" onClick={handlePlan}
-            disabled={loading || busy || !!loadError}>
-            <span aria-hidden="true">✦</span> {planning ? 'Se planifică…' : 'Planifică rutele'}
+          <button className="primary-button" type="button" onClick={() => { void handlePlan() }}
+            disabled={loading || busy || !!loadError || planableOrders.length === 0}>
+            <span aria-hidden="true">✦</span> {planning ? 'Se planifică…' : routes.length === 0
+              ? 'Planifică comenzile eligibile' : 'Planifică comenzile rămase'}
           </button>
         </section>
 
@@ -492,11 +590,17 @@ function App() {
 
         <div className="summary-grid" aria-label="Rezumatul zilei">
           <div className="summary-card"><span>COMENZI</span><strong>{loading ? '—' : orders.length}</strong><small>în ziua selectată</small></div>
-          <div className="summary-card"><span>DE PLANIFICAT</span><strong>{loading ? '—' : confirmedCount}</strong><small>comenzi confirmate</small></div>
+          <div className="summary-card"><span>DE PLANIFICAT</span><strong>{loading ? '—' : planableOrders.length}</strong><small>{blockedOrders.length > 0 ? `${blockedOrders.length} confirmate blocate · vezi motivele` : 'comenzi confirmate cu acțiune disponibilă'}</small></div>
           <div className="summary-card"><span>RUTE</span><strong>{loading ? '—' : routes.length}</strong><small>{loading ? 'se încarcă' : `${stopCount} opriri în total`}</small></div>
         </div>
 
-        <ResourceManagement />
+        <ResourceManagement onResourceSaved={() => setFleetReload(value => value + 1)} />
+        {fleetError && <p className="day-refresh-warning" role="status">Flota nu a putut fi actualizată; confirmarea și planificarea vor fi verificate de API. <button type="button" onClick={() => setFleetReload(value => value + 1)}>Reîncearcă</button></p>}
+
+        <CopyYesterdayPanel key={day} day={day} busy={busy} onPendingChange={setCopyingYesterday} onCopied={result => {
+          setNotice(`${result.created.length} comenzi New create din ziua precedentă.`)
+          setReload(value => value + 1)
+        }} />
 
         <section className="panel new-order-panel" aria-labelledby="new-order-title">
           <div className="panel-heading"><div><p className="section-kicker">ADĂUGARE COMANDĂ</p><h2 id="new-order-title">Comandă nouă</h2></div></div>
@@ -507,6 +611,7 @@ function App() {
           <section className="panel orders-panel" aria-labelledby="orders-title">
             <div className="panel-heading"><div><p className="section-kicker">01 / COMENZI</p><h2 id="orders-title">Comenzile zilei</h2></div><span className="count-pill">{loading ? '…' : orders.length}</span></div>
             {confirmError && <div className="status-error" role="alert">{confirmError}</div>}
+            {confirmedVolumeError && <div className="status-error" role="alert">{confirmedVolumeError}</div>}
             {routeOrderError && <div className="status-error" role="alert">{routeOrderError}</div>}
             {loading ? <p className="state-message" role="status">Se încarcă comenzile…</p>
               : loadError ? <p className="state-message">Comenzile nu sunt disponibile.</p>
@@ -516,11 +621,14 @@ function App() {
                 <tbody>{orders.map(order => {
                   const availableRoutes = order.status === 'Confirmed' ? compatibleRoutes(order, routes) : []
                   const chosenRouteId = availableRoutes.some(route => route.id === routeForOrder[order.id])
-                    ? routeForOrder[order.id] : availableRoutes[0]?.id ?? ''
+                    ? routeForOrder[order.id]
+                    : availableRoutes.find(route => routeAdditionCheck(order, route).accepted)?.id ?? availableRoutes[0]?.id ?? ''
                   const chosenRoute = availableRoutes.find(route => route.id === chosenRouteId)
                   const preview = chosenRoute ? additionPreview(chosenRoute, order) : null
+                  const planability = planabilityByOrder.get(order.id)
                   return <tr key={order.id} className={dragOrderId === order.id ? 'is-being-dragged' : undefined}>
                   <td><strong>{order.address}</strong><span className="secondary-line">{order.zone}</span>
+                    {order.sourceOrderId && <span className="secondary-line">Copiată din comanda de ieri</span>}
                     {order.status === 'Confirmed' && <span className="order-drag-handle"
                       draggable={!busy && !loading}
                       onDragStart={event => {
@@ -536,13 +644,24 @@ function App() {
                       Trage pe o rută
                     </span>}
                   </td>
-                  <td className="number-cell">{volumeFormat.format(order.volume)}</td>
+                  <td className="number-cell">{order.status === 'New'
+                    ? <NewOrderVolume order={order} busy={busy || loading} onSave={handleUpdateVolume}
+                      value={volumeDrafts[order.id] ?? String(order.volume)}
+                      onValueChange={value => setVolumeDrafts(current => ({ ...current, [order.id]: value }))}
+                      maxCapacity={maxVehicleCapacity} />
+                    : volumeFormat.format(order.volume)}</td>
                   <td className="order-status-cell"><span className={`status status-${order.status.toLowerCase()}`}>{orderLabels[order.status] ?? order.status}</span>
                     {order.status === 'New' && <button type="button" className="confirm-button"
-                      onClick={() => handleConfirmOrder(order.id)} disabled={busy || loading}
+                      onClick={() => handleConfirmOrder(order.id)} disabled={busy || loading ||
+                        (maxVehicleCapacity !== null && order.volume > maxVehicleCapacity) ||
+                        (volumeDrafts[order.id] !== undefined &&
+                          Number(volumeDrafts[order.id].trim().replace(',', '.')) !== order.volume)}
                       aria-label={`Confirmă comanda ${order.address}`}>
                       {confirmingOrderId === order.id ? 'Se confirmă…' : 'Confirmă'}
                     </button>}
+                    {order.status === 'New' && volumeDrafts[order.id] !== undefined &&
+                      Number(volumeDrafts[order.id].trim().replace(',', '.')) !== order.volume &&
+                      <small className="route-unavailable">Salvează volumul înainte de confirmare.</small>}
                     {order.status === 'Confirmed' && (availableRoutes.length > 0
                       ? <div className="add-to-route-controls">
                         <select aria-label={`Rută pentru comanda ${order.address}`} value={chosenRouteId}
@@ -565,6 +684,18 @@ function App() {
                         </button>
                       </div>
                       : <span className="route-unavailable">{unavailableRouteReason(order, routes)}</span>)}
+                    {order.status === 'Confirmed' && planability?.newRoutePossible && planability.addableRouteIds.length === 0 &&
+                      <button type="button" className="confirm-button" disabled={busy || loading}
+                        onClick={() => { void handlePlan([order.id]) }}>
+                        Creează rută nouă pentru această comandă
+                      </button>}
+                    {order.status === 'Confirmed' && !planability?.actionable &&
+                      <span className="route-unavailable" role="status">{planability?.reason}</span>}
+                    {order.status === 'Confirmed' && maxVehicleCapacity !== null && maxVehicleCapacity > 0 &&
+                      order.volume > maxVehicleCapacity &&
+                      !routes.some(route => route.stops.some(stop => stop.orderId === order.id)) &&
+                      <ConfirmedVolumeCorrection order={order} maxCapacity={maxVehicleCapacity}
+                        busy={busy || loading} onSave={handleCorrectConfirmedVolume} />}
                   </td>
                 </tr>})}</tbody>
               </table></div>}

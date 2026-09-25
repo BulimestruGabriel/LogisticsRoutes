@@ -5,7 +5,7 @@ import { routeAdditionCheck } from './routeAddition.ts'
 
 const order: OrderResponse = {
   id: 'order', zone: 'Centru', address: 'Adresă test', latitude: 47, longitude: 28,
-  volume: 1.875, deliveryDate: '2026-09-25', status: 'Confirmed',
+  volume: 1.875, deliveryDate: '2026-09-25', status: 'Confirmed', sourceOrderId: null,
 }
 const route: RouteResponse = {
   id: 'route', date: order.deliveryDate,

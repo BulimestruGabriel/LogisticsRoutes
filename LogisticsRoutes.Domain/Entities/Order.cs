@@ -10,4 +10,5 @@ public class Order
     public decimal Volume { get; set; }
     public DateOnly DeliveryDate { get; set; }
     public OrderStatus Status { get; set; } = OrderStatus.New;
+    public Guid? SourceOrderId { get; set; }
 }

@@ -4,7 +4,6 @@ using LogisticsRoutes.BusinessLayer.Data;
 using LogisticsRoutes.BusinessLayer.Models;
 using LogisticsRoutes.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 namespace LogisticsRoutes.BusinessLayer.Services;
 
@@ -76,14 +75,9 @@ public class RoutePlanningService(LogisticsDbContext db, PlanningSettings settin
             await transaction.CommitAsync(cancellationToken);
             return new PlanRoutesResponse(request.Day, routes);
         }
-        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.SerializationFailure)
+        catch (Exception exception) when (DatabaseConflict.IsConcurrent(exception))
         {
-            throw new PlanningConflictException("Planning for this day changed concurrently. Retry the request.");
-        }
-        catch (DbUpdateException exception) when (exception.InnerException is PostgresException
-            { SqlState: PostgresErrorCodes.SerializationFailure })
-        {
-            throw new PlanningConflictException("Planning for this day changed concurrently. Retry the request.");
+            throw new PlanningConflictException("Planificarea s-a schimbat între timp. Reîncarcă datele și reîncearcă.");
         }
     }
 }

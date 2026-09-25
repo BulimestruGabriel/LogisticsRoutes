@@ -18,6 +18,9 @@ public class LogisticsDbContext(DbContextOptions<LogisticsDbContext> options) : 
         {
             entity.Property(order => order.Volume).HasPrecision(18, 3);
             entity.Property(order => order.Status).HasConversion<string>().HasColumnType("text");
+            entity.HasOne<Order>().WithMany().HasForeignKey(order => order.SourceOrderId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(order => new { order.SourceOrderId, order.DeliveryDate }).IsUnique();
         });
 
         modelBuilder.Entity<Vehicle>(entity =>
@@ -27,6 +30,8 @@ public class LogisticsDbContext(DbContextOptions<LogisticsDbContext> options) : 
 
         modelBuilder.Entity<Route>(entity =>
         {
+            entity.HasIndex(route => new { route.Date, route.VehicleId }).IsUnique();
+            entity.HasIndex(route => new { route.Date, route.DriverId }).IsUnique();
             entity.HasOne(route => route.Vehicle)
                 .WithMany()
                 .HasForeignKey(route => route.VehicleId)

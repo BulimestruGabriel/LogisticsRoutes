@@ -12,6 +12,27 @@ export interface OrderResponse {
   volume: number
   deliveryDate: string
   status: OrderStatus
+  sourceOrderId: string | null
+}
+
+export interface CopyYesterdayCandidate {
+  sourceOrder: OrderResponse
+  deliveryStatus: DeliveryStatus | null
+  warnDeliveryOutcome: boolean
+  alreadyCopiedOrderId: string | null
+  possibleExistingToday: OrderResponse[]
+}
+
+export interface CopyYesterdayPreview {
+  day: string
+  sourceDay: string
+  candidates: CopyYesterdayCandidate[]
+}
+
+export interface CopyYesterdayResult {
+  day: string
+  created: OrderResponse[]
+  alreadyCopied: OrderResponse[]
 }
 
 export interface CreateOrderRequest {
@@ -105,6 +126,12 @@ export interface PlanRoutesResponse {
   }>
 }
 
+export interface PlanRemainingResponse {
+  day: string
+  createdRoutes: PlanRoutesResponse['routes']
+  extendedRoutes: Array<{ routeId: string; addedStops: Array<{ orderId: string; sequence: number; address: string }> }>
+}
+
 export interface UpdateRouteStopStatusRequest {
   status: DeliveryStatus
 }
@@ -179,6 +206,34 @@ export function confirmOrder(id: string): Promise<OrderResponse> {
   return request(`/api/orders/${encodeURIComponent(id)}/confirm`, { method: 'PATCH' })
 }
 
+export function updateOrderVolume(id: string, volume: number): Promise<OrderResponse> {
+  return request(`/api/orders/${encodeURIComponent(id)}/volume`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ volume }),
+  })
+}
+
+export function correctConfirmedVolume(id: string, volume: number, expectedVolume: number): Promise<OrderResponse> {
+  return request(`/api/orders/${encodeURIComponent(id)}/confirmed-volume`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ volume, expectedVolume }),
+  })
+}
+
+export function previewYesterday(day: string): Promise<CopyYesterdayPreview> {
+  return request(`/api/orders/copy-yesterday/preview?day=${encodeURIComponent(day)}`)
+}
+
+export function copyYesterday(day: string, sourceOrderIds: string[]): Promise<CopyYesterdayResult> {
+  return request('/api/orders/copy-yesterday', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ day, sourceOrderIds }),
+  })
+}
+
 export function getRoutes(day: string, signal?: AbortSignal): Promise<RouteResponse[]> {
   return request(`/api/routes?day=${encodeURIComponent(day)}`, { signal })
 }
@@ -218,6 +273,14 @@ export function planRoutes(day: string): Promise<PlanRoutesResponse> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  })
+}
+
+export function planRemaining(day: string, orderIds: string[]): Promise<PlanRemainingResponse> {
+  return request('/api/routes/plan-remaining', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ day, orderIds }),
   })
 }
 

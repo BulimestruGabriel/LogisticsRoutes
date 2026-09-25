@@ -49,7 +49,7 @@ function saveErrorMessage(error: unknown, resource: string): string {
   return 'Conexiunea cu API-ul a eșuat. Verifică dacă API-ul rulează și încearcă din nou.'
 }
 
-function VehicleManagement() {
+function VehicleManagement({ onResourceSaved }: { onResourceSaved: () => void }) {
   const { items, loading, error, refresh } = useResourceList(getVehicles)
   const [registrationNumber, setRegistrationNumber] = useState('')
   const [capacity, setCapacity] = useState('')
@@ -82,6 +82,7 @@ function VehicleManagement() {
       setCapacity('')
       setNotice('Vehiculul a fost adăugat.')
       refresh()
+      onResourceSaved()
     } catch (saveFailure) {
       setSaveError(saveErrorMessage(saveFailure, 'Vehiculul'))
     } finally {
@@ -123,7 +124,7 @@ function VehicleManagement() {
   </section>
 }
 
-function DriverManagement() {
+function DriverManagement({ onResourceSaved }: { onResourceSaved: () => void }) {
   const { items, loading, error, refresh } = useResourceList(getDrivers)
   const [fullName, setFullName] = useState('')
   const [fieldError, setFieldError] = useState<string | null>(null)
@@ -152,6 +153,7 @@ function DriverManagement() {
       setFullName('')
       setNotice('Șoferul a fost adăugat.')
       refresh()
+      onResourceSaved()
     } catch (saveFailure) {
       setSaveError(saveErrorMessage(saveFailure, 'Șoferul'))
     } finally {
@@ -187,9 +189,9 @@ function DriverManagement() {
   </section>
 }
 
-export default function ResourceManagement() {
+export default function ResourceManagement({ onResourceSaved }: { onResourceSaved: () => void }) {
   return <div className="resource-grid" aria-label="Administrarea vehiculelor și șoferilor">
-    <VehicleManagement />
-    <DriverManagement />
+    <VehicleManagement onResourceSaved={onResourceSaved} />
+    <DriverManagement onResourceSaved={onResourceSaved} />
   </div>
 }

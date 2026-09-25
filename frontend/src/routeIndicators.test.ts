@@ -19,7 +19,7 @@ const route: RouteResponse = {
 }
 const order: OrderResponse = {
   id: 'order', zone: 'Test', address: 'New stop', latitude: 47, longitude: 28,
-  volume: 1.875, deliveryDate: route.date, status: 'Confirmed',
+  volume: 1.875, deliveryDate: route.date, status: 'Confirmed', sourceOrderId: null,
 }
 const position: RoutePositionResponse = {
   routeId: route.id, latitude: 46.99, longitude: 28.99,

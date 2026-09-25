@@ -25,6 +25,7 @@ builder.Services.AddScoped<VehicleService>();
 builder.Services.AddScoped<DriverService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<RoutePlanningService>();
+builder.Services.AddScoped<RemainingRoutePlanningService>();
 builder.Services.AddScoped<RouteQueryService>();
 builder.Services.AddScoped<RouteOrderService>();
 builder.Services.AddScoped<RouteStopStatusService>();
@@ -73,6 +74,11 @@ app.Use(async (context, next) =>
         await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status409Conflict)
             .ExecuteAsync(context);
     }
+    catch (OrderConflictException exception)
+    {
+        await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status409Conflict)
+            .ExecuteAsync(context);
+    }
     catch (RoutePositionConflictException exception)
     {
         await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status409Conflict)
@@ -81,6 +87,13 @@ app.Use(async (context, next) =>
     catch (PlanningConfigurationException exception)
     {
         await Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status500InternalServerError)
+            .ExecuteAsync(context);
+    }
+    catch (Exception exception) when (!context.RequestAborted.IsCancellationRequested)
+    {
+        app.Logger.LogError(exception, "Cererea nu a putut fi finalizată.");
+        await Results.Problem(detail: "Operația nu a putut fi finalizată din cauza unei erori interne. Reîncarcă datele și încearcă din nou.",
+                statusCode: StatusCodes.Status500InternalServerError)
             .ExecuteAsync(context);
     }
 });
@@ -134,6 +147,21 @@ app.MapGet("/api/orders", async (DateOnly? day, string? status, OrderService ser
     .Produces<List<OrderResponse>>()
     .ProducesProblem(StatusCodes.Status400BadRequest);
 
+app.MapGet("/api/orders/copy-yesterday/preview", async (DateOnly day, OrderService service,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await service.PreviewYesterdayAsync(day, cancellationToken)))
+    .WithTags("Orders")
+    .Produces<CopyYesterdayPreview>()
+    .ProducesProblem(StatusCodes.Status400BadRequest);
+
+app.MapPost("/api/orders/copy-yesterday", async (CopyYesterdayRequest request, OrderService service,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await service.CopyYesterdayAsync(request, cancellationToken)))
+    .WithTags("Orders")
+    .Produces<CopyYesterdayResult>()
+    .ProducesProblem(StatusCodes.Status400BadRequest)
+    .ProducesProblem(StatusCodes.Status409Conflict);
+
 app.MapGet("/api/orders/{id}", async (Guid id, OrderService service, CancellationToken cancellationToken) =>
     {
         var order = await service.GetByIdAsync(id, cancellationToken);
@@ -155,11 +183,44 @@ app.MapPatch("/api/orders/{id}/confirm", async (Guid id, OrderService service,
     .Produces(StatusCodes.Status404NotFound)
     .ProducesProblem(StatusCodes.Status400BadRequest);
 
+app.MapPatch("/api/orders/{id}/volume", async (Guid id, UpdateOrderVolumeRequest request,
+        OrderService service, CancellationToken cancellationToken) =>
+    {
+        var order = await service.UpdateVolumeAsync(id, request, cancellationToken);
+        return order is null ? Results.NotFound() : Results.Ok(order);
+    })
+    .WithTags("Orders")
+    .Produces<OrderResponse>()
+    .Produces(StatusCodes.Status404NotFound)
+    .ProducesProblem(StatusCodes.Status400BadRequest)
+    .ProducesProblem(StatusCodes.Status409Conflict);
+
+app.MapPatch("/api/orders/{id}/confirmed-volume", async (Guid id, CorrectConfirmedVolumeRequest request,
+        OrderService service, CancellationToken cancellationToken) =>
+    {
+        var order = await service.CorrectConfirmedVolumeAsync(id, request, cancellationToken);
+        return order is null ? Results.NotFound() : Results.Ok(order);
+    })
+    .WithTags("Orders")
+    .Produces<OrderResponse>()
+    .Produces(StatusCodes.Status404NotFound)
+    .ProducesProblem(StatusCodes.Status400BadRequest)
+    .ProducesProblem(StatusCodes.Status409Conflict);
+
 app.MapPost("/api/routes/plan", async (PlanRoutesRequest request, RoutePlanningService service,
         CancellationToken cancellationToken) =>
         Results.Ok(await service.PlanAsync(request, cancellationToken)))
     .WithTags("Routes")
     .Produces<PlanRoutesResponse>()
+    .ProducesProblem(StatusCodes.Status400BadRequest)
+    .ProducesProblem(StatusCodes.Status409Conflict)
+    .ProducesProblem(StatusCodes.Status500InternalServerError);
+
+app.MapPost("/api/routes/plan-remaining", async (PlanRemainingRequest request,
+        RemainingRoutePlanningService service, CancellationToken cancellationToken) =>
+        Results.Ok(await service.PlanAsync(request, cancellationToken)))
+    .WithTags("Routes")
+    .Produces<PlanRemainingResponse>()
     .ProducesProblem(StatusCodes.Status400BadRequest)
     .ProducesProblem(StatusCodes.Status409Conflict)
     .ProducesProblem(StatusCodes.Status500InternalServerError);

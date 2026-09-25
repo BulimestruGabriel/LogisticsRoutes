@@ -3,6 +3,7 @@ using System;
 using LogisticsRoutes.BusinessLayer.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LogisticsRoutes.BusinessLayer.Data.Migrations
 {
     [DbContext(typeof(LogisticsDbContext))]
-    partial class LogisticsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260925172448_AddCopiedOrderProvenance")]
+    partial class AddCopiedOrderProvenance
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -99,12 +102,6 @@ namespace LogisticsRoutes.BusinessLayer.Data.Migrations
                     b.HasIndex("DriverId");
 
                     b.HasIndex("VehicleId");
-
-                    b.HasIndex("Date", "DriverId")
-                        .IsUnique();
-
-                    b.HasIndex("Date", "VehicleId")
-                        .IsUnique();
 
                     b.ToTable("Routes");
                 });
