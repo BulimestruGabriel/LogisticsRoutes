@@ -10,3 +10,4 @@ export const deliveryLabels: Record<DeliveryStatus, string> = {
 }
 
 export const numberFormat = new Intl.NumberFormat('ro-RO', { maximumFractionDigits: 2 })
+export const volumeFormat = new Intl.NumberFormat('ro-RO', { maximumFractionDigits: 3 })

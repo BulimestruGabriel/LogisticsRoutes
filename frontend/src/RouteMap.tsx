@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { divIcon, latLngBounds, type LatLngTuple } from 'leaflet'
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
 import { getRoutePosition, type DeliveryStatus, type RoutePositionResponse, type RouteResponse, type RouteStopResponse } from './api'
-import { deliveryLabels, numberFormat } from './format'
+import { deliveryLabels, numberFormat, volumeFormat } from './format'
+import { calculateEta, cutoffSetting, etaTimeZone, positionFreshnessMilliseconds,
+  prepareEta, stopMinutesSetting } from './routeIndicators'
 import { loadRoadRoute, type RoadRoute } from './routing'
 import 'leaflet/dist/leaflet.css'
 
@@ -57,7 +59,8 @@ function vehicleIcon(simulated: boolean) {
 }
 
 const positionPollMilliseconds = 3000
-const staleAfterMilliseconds = 60000
+const etaRetryMilliseconds = 30000
+const etaRequestTimeoutMilliseconds = 8000
 
 function formatMoment(value: string): string {
   return new Date(value).toLocaleString('ro-MD', { dateStyle: 'short', timeStyle: 'medium' })
@@ -85,13 +88,21 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
     routeId: string; position: RoutePositionResponse | null; error: boolean; loaded: boolean
   } | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  const [etaRouting, setEtaRouting] = useState<{ key: string; road: RoadRoute | null } | null>(null)
+  const [etaRetry, setEtaRetry] = useState(0)
   const currentTracking = tracking?.routeId === route.id ? tracking : null
   const vehicle = currentTracking?.position ?? null
   const vehiclePosition: LatLngTuple | null = vehicle ? [vehicle.latitude, vehicle.longitude] : null
-  const stale = vehicle !== null && now - new Date(vehicle.reportedAt).getTime() > staleAfterMilliseconds
+  const stale = vehicle !== null && now - new Date(vehicle.reportedAt).getTime() > positionFreshnessMilliseconds
   const simulated = vehicle?.source === 'Simulated'
   const road = routing?.key === routeKey ? routing.road : null
   const routeLoading = positions.length > 1 && !!routingBaseUrl && routing?.key !== routeKey
+  const stopMinutes = stopMinutesSetting(import.meta.env.VITE_ETA_STOP_MINUTES)
+  const cutoff = cutoffSetting(import.meta.env.VITE_DELIVERY_CUTOFF_TIME)
+  const etaPreparation = prepareEta(route.stops, vehicle, now)
+  const etaKey = etaPreparation.kind === 'ready'
+    ? `${route.id}|${etaPreparation.points.map(point => point.join(',')).join(';')}` : null
+  const etaRoad = etaRouting?.key === etaKey ? etaRouting.road : null
 
   useEffect(() => {
     if (positions.length < 2) return
@@ -132,6 +143,39 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
     return () => { controller.abort(); window.clearInterval(interval) }
   }, [route.id])
 
+  useEffect(() => {
+    const interval = window.setInterval(() => setEtaRetry(value => value + 1), etaRetryMilliseconds)
+    return () => window.clearInterval(interval)
+  }, [route.id])
+
+  useEffect(() => {
+    if (!etaKey || etaPreparation.kind !== 'ready' || !routingBaseUrl || stopMinutes === null || cutoff === 'invalid') return
+    const controller = new AbortController()
+    let cancelled = false
+    const timeout = window.setTimeout(() => controller.abort(), etaRequestTimeoutMilliseconds)
+    loadRoadRoute(routingBaseUrl, etaPreparation.points, controller.signal)
+      .then(result => { if (!cancelled) setEtaRouting({ key: etaKey, road: result }) })
+      .catch(() => { if (!cancelled) setEtaRouting({ key: etaKey, road: null }) })
+      .finally(() => window.clearTimeout(timeout))
+    return () => { cancelled = true; controller.abort(); window.clearTimeout(timeout) }
+  // etaKey captures the vehicle and ordered remaining-stop coordinates; etaRetry retries a failed local OSRM request.
+  }, [etaKey, etaRetry, routingBaseUrl, stopMinutes, cutoff])
+
+  const eta = etaPreparation.kind === 'ready' && etaRoad?.durationSeconds !== null &&
+    etaRoad?.durationSeconds !== undefined && stopMinutes !== null && cutoff !== 'invalid'
+    ? calculateEta(now, etaRoad.durationSeconds, etaPreparation.remainingStops, stopMinutes,
+      route.date, cutoff) : null
+  let etaReason = 'Durata traseului nu poate fi calculată.'
+  if (!currentTracking?.loaded) etaReason = 'Se verifică poziția vehiculului.'
+  else if (currentTracking.error) etaReason = 'Poziția vehiculului nu poate fi actualizată.'
+  else if (etaPreparation.kind === 'unavailable') etaReason = etaPreparation.reason
+  else if (stopMinutes === null) etaReason = 'Durata de staționare configurată este invalidă.'
+  else if (cutoff === 'invalid') etaReason = 'Ora-limită configurată este invalidă.'
+  else if (!routingBaseUrl) etaReason = 'OSRM local nu este configurat.'
+  else if (etaRouting?.key !== etaKey) etaReason = 'Se calculează traseul prin OSRM local.'
+  else if (!etaRoad) etaReason = 'OSRM local nu răspunde sau nu găsește un traseu rutier.'
+  else if (etaRoad.durationSeconds === null) etaReason = 'OSRM local nu a furnizat durata deplasării.'
+
   const linePositions = road?.positions ?? positions
   const mapPositions = positions.length ? positions : vehiclePosition ? [vehiclePosition] : []
 
@@ -150,6 +194,21 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
         </span> : <span>{!currentTracking?.loaded ? 'Se verifică ultima poziție raportată.' : currentTracking.error
           ? 'Poziția vehiculului nu poate fi citită momentan.'
           : 'Nu a fost raportată încă nicio poziție pentru această rută.'}</span>}
+      </div>
+      <div className="route-eta" aria-label="Estimarea încheierii rutei">
+        <div className="route-eta-heading"><strong>Încheiere estimată</strong><span>Fără trafic în timp real</span></div>
+        {etaPreparation.kind === 'complete' ? <p>Ruta este încheiată; nu mai există opriri de estimat.</p>
+          : eta && !currentTracking?.error ? <>
+            <strong className="route-eta-time">{new Intl.DateTimeFormat('ro-MD', {
+              timeZone: etaTimeZone, dateStyle: 'medium', timeStyle: 'short',
+            }).format(eta.finish)} <small>({etaTimeZone})</small></strong>
+            <p>OSRM: {numberFormat.format(eta.drivingMinutes)} min deplasare · {etaPreparation.kind === 'ready' ? etaPreparation.remainingStops : 0} opriri × {stopMinutes} min staționare = {numberFormat.format(eta.stationaryMinutes)} min.</p>
+            {eta.pastCutoff && <div className="eta-cutoff-warning" role="alert">
+              Estimarea depășește ora-limită {cutoff} din {route.date} ({etaTimeZone}).
+            </div>}
+          </> : <p><strong>Estimare indisponibilă.</strong> {etaReason}</p>}
+        {stopMinutes !== null && <p className="eta-settings">Staționare configurată: {stopMinutes} min/opire.
+          {cutoff && cutoff !== 'invalid' && ` Oră-limită: ${cutoff} în ziua livrării (${etaTimeZone}).`}</p>}
       </div>
       {invalidStops.length > 0 && <div className="map-warning" role="alert">
         <strong>{invalidStops.length === 1 ? 'O oprire are' : `${invalidStops.length} opriri au`} coordonate invalide.</strong>
@@ -180,7 +239,7 @@ export default function RouteMap({ route }: { route: RouteResponse }) {
                 <div className="stop-popup">
                   <strong>Oprirea {stop.sequence}: {stop.address}</strong>
                   <span>Zonă: {stop.zone}</span>
-                  <span>Volum: {numberFormat.format(stop.volume)}</span>
+                  <span>Volum: {volumeFormat.format(stop.volume)}</span>
                   <span>Status: {deliveryLabels[stop.deliveryStatus] ?? stop.deliveryStatus}</span>
                 </div>
               </Popup>

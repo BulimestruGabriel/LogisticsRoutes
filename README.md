@@ -74,6 +74,23 @@ Dispecerul citește poziția rutei selectate la fiecare 3 secunde, fără reînc
 
 Pentru ruta selectată, Dispecerul arată separat opririle încheiate din total și numărul celor `Delivered`, `Refused` și `PartialReturn`. Toate trei sunt stări finale; o oprire refuzată nu este numărată ca livrată. Numărul `Sequence` rămâne pe fiecare marcaj, iar culoarea arată starea din legenda hărții; popup-ul păstrează statusul scris. Comenzile și rutele zilei se reîmprospătează aproximativ la 30 de secunde, păstrând ruta selectată. Ora ultimei actualizări reușite este afișată în Dispecer; dacă o cerere eșuează, ultimele date rămân vizibile și apare un mesaj discret. Intervalul separat de 3 secunde pentru poziția vehiculului rămâne neschimbat.
 
+### Capacitate și încheiere estimată în Dispecer
+
+Pentru ruta selectată, bara de capacitate arată volumul total din API raportat la capacitatea vehiculului, procentul folosit și spațiul rămas. La o comandă `Confirmed`, selectorul arată rutele eligibile din aceeași zi și zonă, cu opriri încă neîncepute, inclusiv cele în care comanda nu încape. Sub selector apare volumul proiectat; dacă depășește capacitatea, butonul **Adaugă la rută** este dezactivat. Acesta este doar un calcul preventiv din datele afișate: API-ul verifică din nou în tranzacție și un conflict `409` apărut între timp este afișat cu mesajul său, apoi listele sunt reîncărcate. Volumele sunt afișate cu până la trei zecimale, ca în baza de date.
+
+Estimarea de încheiere folosește ultima poziție a vehiculului și cererea OSRM Route de la acea poziție prin **opririle care nu sunt încă finale**, în ordinea `Sequence`. Adaugă durata OSRM de condus la `numărul opririlor rămase × minutele de staționare per oprire`. Minutele de staționare sunt un parametru operațional, nu o măsurătoare din API. Configurează în `frontend/.env.local` înainte de pornirea Vite sau de build (model în `frontend/.env.example`):
+
+```dotenv
+VITE_OSRM_BASE_URL=http://127.0.0.1:5000
+VITE_ETA_STOP_MINUTES=5
+# Opțional, HH:mm în Europe/Chisinau pentru ziua livrării:
+VITE_DELIVERY_CUTOFF_TIME=18:00
+```
+
+`VITE_ETA_STOP_MINUTES` este un număr întreg între 0 și 240; dacă lipsește, valoarea este **5 min/opire**. O valoare invalidă oprește calculul și este indicată în Dispecer. `VITE_DELIVERY_CUTOFF_TIME` este opțională și acceptă `HH:mm` în intervalul `00:00`–`23:59`. Dacă lipsește, nu apare avertizarea de termen; dacă este invalidă, estimarea devine indisponibilă până la corectarea configurației. Cu termen configurat, Dispecerul avertizează când încheierea estimată depășește ora-limită din **ziua livrării**, în fusul `Europe/Chisinau`. Setările `VITE_*` sunt incluse la build și necesită repornirea Vite sau reconstruirea frontendului după modificare.
+
+Poziția trebuie să existe, să aibă coordonate valide și să fi fost raportată în ultimele **60 de secunde**. Dacă poziția lipsește/este veche, o oprire rămasă are coordonate invalide, OSRM nu răspunde/nu găsește traseu ori nu furnizează durată, Dispecerul afișează **„Estimare indisponibilă”** și motivul, fără o oră inventată. Cererea către OSRM are timeout de 8 secunde și se reîncearcă periodic; poziția se citește în continuare la 3 secunde. O poziție `Simulated` poate fi folosită pentru test, dar rămâne etichetată ca simulată. Estimarea folosește profilul auto OSRM și **nu include trafic în timp real**, pauze neprevăzute sau timpul până la depozit după ultima oprire. Nu completează `RouteStop.EstimatedArrival` și nu se salvează în bază. Serviciul OSRM trebuie să fie accesibil din browserul Dispecerului și să permită CORS.
+
 Generează o cheie aleatoare pentru semnarea tokenurilor și păstreaz-o numai pe server. În dezvoltare, [User Secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets) o păstrează în afara repository-ului; repornește API-ul după configurare:
 
 ```powershell

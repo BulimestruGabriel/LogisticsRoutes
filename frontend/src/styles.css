@@ -163,6 +163,8 @@ h3{margin:5px 0 0;font-size:17px;letter-spacing:-.025em}
 .add-to-route-controls select:focus{border-color:#779e2e;outline:2px solid #b3d95d55}
 .add-to-route-controls .confirm-button{margin-top:0}
 .add-to-route-controls select:disabled{opacity:.55}
+.capacity-preview{display:block;max-width:230px;color:#426c32;font-size:11px;line-height:1.4;white-space:normal}
+.capacity-preview.is-over{color:#a5372d;font-weight:750}
 .route-unavailable{display:block;max-width:210px;margin-top:7px;color:#87938d;font-size:11px;line-height:1.4}
 .stop-order-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .stop-order-heading p{margin:0 0 12px;color:#86928d;font-size:10px;font-weight:800;letter-spacing:.12em}
@@ -188,4 +190,21 @@ h3{margin:5px 0 0;font-size:17px;letter-spacing:-.025em}
 .vehicle-status-badge.is-stale{background:#ffe8cc;color:#8a501e}
 .vehicle-marker{display:grid;place-items:center;border:3px solid #fff;border-radius:50%;background:#12628c;box-shadow:0 2px 10px #102c4155;color:#fff;font-size:9px;font-weight:900;letter-spacing:.02em;text-align:center}
 .vehicle-marker-simulated{background:#af661b}
+.route-capacity,.route-eta{margin:14px 24px 0;padding:14px 16px;border:1px solid #dce8d4;border-radius:9px;background:#f8fbf5;color:#334e3b;font-size:12px;line-height:1.5}
+.route-capacity-heading,.route-eta-heading{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:3px 12px}
+.route-capacity-heading strong,.route-eta-heading strong{font-size:13px}
+.route-capacity-heading span{font-variant-numeric:tabular-nums;font-weight:750}
+.capacity-track{height:11px;margin:12px 0 6px;border-radius:99px;background:#e1e9dc;overflow:hidden}
+.capacity-track>span{display:block;height:100%;border-radius:99px;background:#5a9b4c}
+.capacity-track>span.is-over{background:#b44337}
+.capacity-remaining{font-weight:700;color:#426c32}
+.capacity-remaining.is-over{color:#a5372d}
+.route-eta{border-color:#d7e4ed;background:#f3f9fd;color:#385366}
+.route-eta-heading span{color:#5b7282;font-size:11px;font-weight:700}
+.route-eta p{margin:8px 0 0}
+.route-eta-time{display:block;margin:8px 0 0;color:#244f6b;font-size:19px;font-variant-numeric:tabular-nums}
+.route-eta-time small{font-size:11px;font-weight:650}
+.route-eta .eta-settings{color:#617a88;font-size:11px}
+.eta-cutoff-warning{margin:12px 0 0;padding:9px 11px;border:1px solid #e6a99c;border-radius:7px;background:#fff0eb;color:#993827;font-weight:750}
+@media(max-width:600px){.route-capacity,.route-eta{margin:14px 15px 0;padding:13px}.route-eta-time{font-size:17px}}
 @media(max-width:600px){.vehicle-status{margin:15px 15px 0}}

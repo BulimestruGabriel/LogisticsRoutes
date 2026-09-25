@@ -17,11 +17,12 @@ import {
   type OrderStatus,
   type RouteResponse,
 } from './api'
-import { deliveryLabels, numberFormat } from './format'
+import { deliveryLabels, volumeFormat } from './format'
 import { startDayRefresh } from './dayRefresh'
 import NewOrderForm from './NewOrderForm'
 import ResourceManagement from './ResourceManagement'
 import RouteMap from './RouteMap'
+import { additionPreview, capacityUsage } from './routeIndicators'
 import { routeProgress } from './routeProgress'
 
 const orderLabels: Record<OrderStatus, string> = {
@@ -110,8 +111,7 @@ function moveStopErrorMessage(error: unknown): string {
 function compatibleRoutes(order: OrderResponse, routes: RouteResponse[]): RouteResponse[] {
   return routes.filter(route => route.date === order.deliveryDate && route.stops.length > 0 &&
     route.stops.every(stop => stop.deliveryStatus === 'Pending' &&
-      stop.zone.toLocaleLowerCase('ro-RO') === order.zone.toLocaleLowerCase('ro-RO')) &&
-    route.totalVolume + order.volume <= route.vehicle.capacity)
+      stop.zone.toLocaleLowerCase('ro-RO') === order.zone.toLocaleLowerCase('ro-RO')))
 }
 
 function unavailableRouteReason(order: OrderResponse, routes: RouteResponse[]): string {
@@ -122,7 +122,7 @@ function unavailableRouteReason(order: OrderResponse, routes: RouteResponse[]): 
   if (sameZone.length === 0) return 'Nu există rută în zona comenzii.'
   const pending = sameZone.filter(route => route.stops.every(stop => stop.deliveryStatus === 'Pending'))
   if (pending.length === 0) return 'Opririle rutelor din această zonă au început deja.'
-  return 'Capacitatea vehiculelor din această zonă este insuficientă.'
+  return 'Nu există rută eligibilă pentru această comandă.'
 }
 
 function App() {
@@ -292,6 +292,10 @@ function App() {
 
   async function handleAddToRoute(orderId: string, routeId: string) {
     if (mutationInFlight.current || !routeId) return
+    const order = orders.find(item => item.id === orderId)
+    const route = routes.find(item => item.id === routeId)
+    const preview = order && route ? additionPreview(route, order) : null
+    if (!order || order.status !== 'Confirmed' || !route || !preview || preview.exceeds) return
     mutationInFlight.current = true
     setAddingOrderId(orderId)
     setRouteOrderError(null)
@@ -414,6 +418,7 @@ function App() {
   const stopCount = routes.reduce((sum, route) => sum + route.stops.length, 0)
   const selectedRoute = routes.find(route => route.id === selectedRouteId) ?? routes[0]
   const selectedProgress = selectedRoute ? routeProgress(selectedRoute.stops) : null
+  const selectedCapacity = selectedRoute ? capacityUsage(selectedRoute) : null
   const busy = planning || creatingOrder || confirmingOrderId !== null ||
     updatingStop !== null || addingOrderId !== null || savingStopOrder || draftOrder !== null ||
     movingStop || moveDraft !== null
@@ -492,9 +497,11 @@ function App() {
                   const availableRoutes = order.status === 'Confirmed' ? compatibleRoutes(order, routes) : []
                   const chosenRouteId = availableRoutes.some(route => route.id === routeForOrder[order.id])
                     ? routeForOrder[order.id] : availableRoutes[0]?.id ?? ''
+                  const chosenRoute = availableRoutes.find(route => route.id === chosenRouteId)
+                  const preview = chosenRoute ? additionPreview(chosenRoute, order) : null
                   return <tr key={order.id}>
                   <td><strong>{order.address}</strong><span className="secondary-line">{order.zone}</span></td>
-                  <td className="number-cell">{numberFormat.format(order.volume)}</td>
+                  <td className="number-cell">{volumeFormat.format(order.volume)}</td>
                   <td className="order-status-cell"><span className={`status status-${order.status.toLowerCase()}`}>{orderLabels[order.status] ?? order.status}</span>
                     {order.status === 'New' && <button type="button" className="confirm-button"
                       onClick={() => handleConfirmOrder(order.id)} disabled={busy || loading}
@@ -507,11 +514,18 @@ function App() {
                           onChange={event => { setRouteForOrder(current => ({ ...current, [order.id]: event.target.value })); setRouteOrderError(null) }}
                           disabled={busy || loading}>
                           {availableRoutes.map(route => <option value={route.id} key={route.id}>
-                            Ruta {routes.indexOf(route) + 1} · {route.vehicle.registrationNumber} · liber {numberFormat.format(route.vehicle.capacity - route.totalVolume)}
+                            Ruta {routes.indexOf(route) + 1} · {route.vehicle.registrationNumber} · liber {volumeFormat.format(Math.max(0, route.vehicle.capacity - route.totalVolume))}
                           </option>)}
                         </select>
+                        <span className={`capacity-preview${preview?.exceeds ? ' is-over' : ''}`} role="status">
+                          {preview && chosenRoute
+                            ? `După adăugare: ${volumeFormat.format(preview.projected)} / ${volumeFormat.format(chosenRoute.vehicle.capacity)} · ${preview.exceeds
+                              ? `depășire cu ${volumeFormat.format(-preview.remaining)}`
+                              : `rămân ${volumeFormat.format(preview.remaining)}`}`
+                            : 'Capacitatea nu poate fi calculată din datele primite.'}
+                        </span>
                         <button type="button" className="confirm-button" onClick={() => handleAddToRoute(order.id, chosenRouteId)}
-                          disabled={busy || loading}>
+                          disabled={busy || loading || !preview || preview.exceeds}>
                           {addingOrderId === order.id ? 'Se adaugă…' : 'Adaugă la rută'}
                         </button>
                       </div>
@@ -540,7 +554,7 @@ function App() {
                 const destinationRoutes = routes.filter(candidate => candidate.id !== route.id && candidate.date === day)
                 return <article className={`route-card${selectedRoute?.id === route.id ? ' is-selected' : ''}`} key={route.id}>
                 <div className="route-header"><div><span className="route-index">RUTA {String(index + 1).padStart(2, '0')}</span><h3>{route.stops[0]?.zone || 'Rută'}</h3></div><div className="route-header-actions"><span className="stop-count">{route.stops.length} {route.stops.length === 1 ? 'oprire' : 'opriri'}</span><button type="button" className="route-select-button" aria-pressed={selectedRoute?.id === route.id} onClick={() => { setSelectedRouteId(route.id); setStatusError(null) }} disabled={busy}>{selectedRoute?.id === route.id ? 'Pe hartă' : 'Vezi pe hartă'}</button></div></div>
-                <div className="route-facts"><div><span>VEHICUL</span><strong>{route.vehicle.registrationNumber}</strong></div><div><span>ȘOFER</span><strong>{route.driver.fullName}</strong></div><div><span>VOLUM TOTAL</span><strong>{numberFormat.format(route.totalVolume)}</strong></div></div>
+                <div className="route-facts"><div><span>VEHICUL</span><strong>{route.vehicle.registrationNumber}</strong></div><div><span>ȘOFER</span><strong>{route.driver.fullName}</strong></div><div><span>VOLUM TOTAL</span><strong>{volumeFormat.format(route.totalVolume)}</strong></div></div>
                 <div className="stops"><div className="stop-order-heading"><p>{editing ? 'ORDINE PROPUSĂ' : 'OPRIRI ÎN ORDINE'}</p>
                   {selectedRoute?.id === route.id && !editing && canReorder &&
                     <button type="button" className="route-select-button" disabled={busy || loading}
@@ -557,7 +571,7 @@ function App() {
                   onDragOver={editing ? event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' } : undefined}
                   onDrop={editing ? event => { event.preventDefault(); moveStop(route.id, event.dataTransfer.getData('text/plain'), stop.id) } : undefined}>
                   <span className="sequence">{String(position + 1).padStart(2, '0')}</span>
-                  <span className="stop-detail"><strong>{stop.address}</strong><small>{stop.zone} · {numberFormat.format(stop.volume)} · {deliveryLabels[stop.deliveryStatus] ?? stop.deliveryStatus}</small>
+                  <span className="stop-detail"><strong>{stop.address}</strong><small>{stop.zone} · {volumeFormat.format(stop.volume)} · {deliveryLabels[stop.deliveryStatus] ?? stop.deliveryStatus}</small>
                     {editing && <span className="stop-actions reorder-actions">
                       <button type="button" disabled={position === 0 || savingStopOrder}
                         onClick={() => moveStop(route.id, stop.id, orderedStops[position - 1].id)}
@@ -631,6 +645,19 @@ function App() {
               <span className="progress-partialreturn">Retur parțial <strong>{selectedProgress.partialReturn}</strong></span>
             </div>
           </div>}
+          {selectedRoute && !loading && !loadError && <div className="route-capacity" aria-label="Capacitatea rutei selectate">
+              <div className="route-capacity-heading"><strong>Capacitate vehicul</strong>
+                <span>{selectedCapacity ? `${volumeFormat.format(selectedCapacity.total)} / ${volumeFormat.format(selectedCapacity.capacity)} · ${volumeFormat.format(selectedCapacity.percent)}%` : 'Date indisponibile'}</span>
+              </div>
+              {selectedCapacity && <><div className="capacity-track" role="progressbar" aria-label="Capacitate utilizată"
+                aria-valuemin={0} aria-valuemax={selectedCapacity.capacity} aria-valuenow={Math.min(selectedCapacity.total, selectedCapacity.capacity)}
+                aria-valuetext={`${volumeFormat.format(selectedCapacity.total)} din ${volumeFormat.format(selectedCapacity.capacity)}`}>
+                <span className={selectedCapacity.remaining < 0 ? 'is-over' : ''} style={{ width: `${Math.min(100, selectedCapacity.percent)}%` }} />
+              </div><span className={`capacity-remaining${selectedCapacity.remaining < 0 ? ' is-over' : ''}`}>
+                {selectedCapacity.remaining < 0 ? `Depășire: ${volumeFormat.format(-selectedCapacity.remaining)}` : `Spațiu rămas: ${volumeFormat.format(selectedCapacity.remaining)}`}
+              </span></>}
+            </div>
+          }
           {loading ? <p className="state-message" role="status">Se încarcă harta…</p>
             : loadError ? <p className="state-message">Harta nu este disponibilă până la încărcarea rutelor.</p>
             : !selectedRoute ? <p className="state-message">Nu există rute pentru această zi. Selectează altă zi sau planifică rutele pentru a vedea opririle pe hartă.</p>
